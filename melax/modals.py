@@ -42,7 +42,7 @@ class Block(ABC, Generic[T]):
         ...
 
     @abstractmethod
-    def _on_action(self, action_id: str, action: dict) -> None:
+    def _on_action(self, action_id: str, action: object) -> None:
         ...
 
     def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
@@ -122,16 +122,14 @@ class Element(ABC, Generic[T]):
             v = v[k]
         return v
 
-    def _on_action(self, action: dict) -> None:
+    def _on_action(self, action: object) -> None:
         payload = self._extract_payload(action)
         value = self._parse_payload(payload)
         if self._callback is not None:
             self._callback(value)
 
     def _on_options(self, query: str) -> list["Option"]:
-        assert isinstance(self, Select)
-        assert isinstance(self.options, Callable)
-        return self.options(query)
+        raise Exception(f"Can't get options for element of type {self.__class__}")
 
 
 class Blocks:
@@ -199,9 +197,9 @@ class Blocks:
         return hasattr(self, block_id)
 
 
-class NestedBlocks(Generic[T]):
+class NestedBlocks:
     def __init__(
-        self, blocks: Mapping[str, "IntoBlocks[T]"], *, rename_children: bool = True
+        self, blocks: Mapping[str, "IntoBlocks"], *, rename_children: bool = True
     ) -> None:
         self.blocks = blocks
         if rename_children:
@@ -209,7 +207,7 @@ class NestedBlocks(Generic[T]):
                 block.__set_name__(self, block_id)
 
     def _to_slack_blocks(self) -> Sequence[JSON]:
-        result = []
+        result: list[JSON] = []
         for block in self.blocks.values():
             if isinstance(block, Block | NestedBlocks):
                 result.extend(block._to_slack_blocks())
@@ -243,8 +241,6 @@ class NestedBlocks(Generic[T]):
                     }
                 )
                 result[name] = rec
-            else:
-                continue
 
         return result
 
@@ -286,10 +282,10 @@ class NestedBlocks(Generic[T]):
             ...
 
 
-IntoBlocks = Union[Block[T], NestedBlocks[T]]
+IntoBlocks = Union[Block[Any], NestedBlocks]
 
 
-def nested(**blocks: IntoBlocks[T]) -> NestedBlocks[T]:
+def nested(**blocks: IntoBlocks) -> NestedBlocks:
     return NestedBlocks(blocks=blocks)
 
 
@@ -403,14 +399,18 @@ class Divider(Block[None]):
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {"type": "divider"}
 
-    def _on_action(self, action_id: str, action: dict) -> None:
+    def _on_action(self, action_id: str, action: object) -> None:
         raise Exception(f"Dividers can't respond to actions: {action_id=} {action=}")
 
-    def _on_options(self, action_id: str, query: str) -> None:
+    def _on_options(self, action_id: str, query: str) -> list["Option"]:
         raise Exception(f"Dividers can't respond to options: {action_id=} {query=}")
 
 
 class Section(Block[T]):
+    @overload
+    def __init__(self: "Section[None]", text: Text, fields: list[Text] = []) -> None:
+        ...
+
     @overload
     def __init__(
         self: "Section[T]",
@@ -418,10 +418,6 @@ class Section(Block[T]):
         fields: list[Text] = [],
         accessory: Element[T] = ...,
     ) -> None:
-        ...
-
-    @overload
-    def __init__(self: "Section[None]", text: Text, fields: list[Text] = []) -> None:
         ...
 
     def __init__(
@@ -439,19 +435,14 @@ class Section(Block[T]):
         return self.accessory._parse(payload)
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
-        j = {
+        return {
             "type": "section",
             "text": self.text._to_slack_json(),
+            **({"fields": [f._to_slack_json() for f in self.fields]} if self.fields else {}),
+            **({"accessory": self.accessory._to_slack_json()} if self.accessory else {}),
         }
 
-        if self.fields:
-            j["fields"] = [f._to_slack_json() for f in self.fields]
-        if self.accessory:
-            j["accessory"] = self.accessory._to_slack_json()
-
-        return j
-
-    def _on_action(self, action_id: str, action: dict) -> None:
+    def _on_action(self, action_id: str, action: object) -> None:
         assert self.accessory is not None
         return self.accessory._on_action(action)
 
@@ -496,7 +487,7 @@ class Input(Block[T]):
 
         return self.element._parse(payload)
 
-    def _on_action(self, action_id: str, action: dict) -> None:
+    def _on_action(self, action_id: str, action: object) -> None:
         return self.element._on_action(action)
 
     def _on_options(self, action_id: str, query: str) -> list["Option"]:
@@ -617,14 +608,12 @@ class PlainTextInput(Element[str]):
         self.placeholder = placeholder
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
-        j = {
+        return {
             "type": "plain_text_input",
             "multiline": self.multiline,
             "focus_on_load": self.focus_on_load,
+            **({"placehodler": PlainText(self.placeholder)._to_slack_json()} if self.placeholder is not None else {}),
         }
-        if self.placeholder is not None:
-            j["placeholder"] = PlainText(self.placeholder)._to_slack_json()
-        return j
 
     def _parse_payload(self, payload: object) -> str:
         assert isinstance(payload, str)
@@ -727,3 +716,7 @@ class Select(Element[str]):
     @property
     def _payload_path(self) -> list[str]:
         return ["selected_option", "value"]
+
+    def _on_options(self, query: str) -> list["Option"]:
+        assert callable(self.options)
+        return self.options(query)
