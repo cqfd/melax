@@ -12,7 +12,6 @@ from typing import (
     Generic,
     Literal,
     Mapping,
-    Protocol,
     Self,
     Sequence,
     TypeVar,
@@ -276,30 +275,7 @@ def nested(**blocks: "IntoBlocks[T]") -> NestedBlocks[T]:
     return NestedBlocks(blocks=blocks)
 
 
-class IntoBlocks(Protocol[T]):
-    """
-    A protocol for types that can be converted into a collection of Slack blocks.
-
-    In this model, a form is a tree where each node conforms to IntoBlocks.
-    """
-
-    def _to_slack_blocks(self) -> Sequence[JSON]:
-        ...
-
-    def _parse(self, value: object) -> T:
-        ...
-
-    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
-        ...
-
-    def _on_block_options(
-        self, block_id: str, action_id: str, query: str
-    ) -> list["Option"]:
-        ...
-
-    def __set_name__(self, owner: Any, name: str) -> None:
-        ...
-
+IntoBlocks = Union[Block[T], NestedBlocks[T]]
 
 Bs = TypeVar("Bs", bound=Blocks)
 
