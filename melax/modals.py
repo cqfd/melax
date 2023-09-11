@@ -357,7 +357,6 @@ class Modal(ABC, pydantic.BaseModel):
     def __init_subclass__(cls) -> None:
         _modals[cls.__name__] = cls
 
-
     def to_slack_view_json(self) -> dict[str, Any]:
         view = self.render()
         return {
@@ -438,8 +437,14 @@ class Section(Block[T]):
         return {
             "type": "section",
             "text": self.text._to_slack_json(),
-            **({"fields": [f._to_slack_json() for f in self.fields]} if self.fields else {}),
-            **({"accessory": self.accessory._to_slack_json()} if self.accessory else {}),
+            **(
+                {"fields": [f._to_slack_json() for f in self.fields]}
+                if self.fields
+                else {}
+            ),
+            **(
+                {"accessory": self.accessory._to_slack_json()} if self.accessory else {}
+            ),
         }
 
     def _on_action(self, action_id: str, action: object) -> None:
@@ -612,7 +617,11 @@ class PlainTextInput(Element[str]):
             "type": "plain_text_input",
             "multiline": self.multiline,
             "focus_on_load": self.focus_on_load,
-            **({"placehodler": PlainText(self.placeholder)._to_slack_json()} if self.placeholder is not None else {}),
+            **(
+                {"placehodler": PlainText(self.placeholder)._to_slack_json()}
+                if self.placeholder is not None
+                else {}
+            ),
         }
 
     def _parse_payload(self, payload: object) -> str:

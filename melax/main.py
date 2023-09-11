@@ -41,7 +41,6 @@ class ExampleModal(Modal):
     click_count: int = 0
 
     def render(self) -> View:
-
         # Declare a collection of blocks, in such a way that the on_submit
         # below can get nice type-safety. (Looks weird to declare a new class
         # inside the render method, but it works.)
@@ -99,9 +98,7 @@ class ExampleModal(Modal):
             if "wow" in form and form.fav_ice_cream == "van":
                 errors.append(Form.fav_ice_cream.error("Ew, vanilla"))
             if form.extra["and_one_more"]["thing"] != "open sesame":
-                errors.append(
-                    Form.extra["and_one_more"]["thing"].error("Guess again")
-                )
+                errors.append(Form.extra["and_one_more"]["thing"].error("Guess again"))
             if errors:
                 return Errors(*errors)
 
@@ -109,9 +106,7 @@ class ExampleModal(Modal):
             print(f"{form.name=} {form.dob=} {form.fav_number=} {self.click_count=}")
 
             # Signal what we want to do next via the return value.
-            return Push(
-                NiceToMeetYouModal(name=form.name)
-            )
+            return Push(NiceToMeetYouModal(name=form.name))
 
         # Finally, render returns a View that bundles everything together.
         return View(
@@ -120,7 +115,7 @@ class ExampleModal(Modal):
             # handler will receive an instance. Looks weird but actually
             # works pretty well in terms of types.
             blocks=Form,
-            on_submit=("Click me!", on_submit)
+            on_submit=("Click me!", on_submit),
         )
 
     def fav_ice_cream_options(self, query: str) -> list[Option]:
@@ -147,14 +142,16 @@ class NiceToMeetYouModal(Modal):
             msg = Section(PlainText(f"Nice to meet you {self.name}!"))
 
         return View(
-            title="Nice to meet you!", blocks=Form, on_submit=("Ok", lambda _: print("All done!"))
+            title="Nice to meet you!",
+            blocks=Form,
+            on_submit=("Ok", lambda _: print("All done!")),
         )
 
 
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
-@app.command("/do") # <- or whatever your command is called
+@app.command("/do")  # <- or whatever your command is called
 def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> None:
     context.ack()
 
@@ -192,17 +189,11 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
         case None:
             context.ack(response_action="clear")
         case Push(next_modal):
-            context.ack(
-                response_action="push",
-                view=next_modal.to_slack_view_json()
-            )
+            context.ack(response_action="push", view=next_modal.to_slack_view_json())
         case Errors(errors):
             context.ack(response_action="errors", errors=errors)
         case next_modal:
-            context.ack(
-                response_action="update",
-                view=next_modal.to_slack_view_json()
-            )
+            context.ack(response_action="update", view=next_modal.to_slack_view_json())
 
 
 @app.action(re.compile(r".*"))
@@ -230,7 +221,7 @@ def handle_block_actions(
     client.views_update(
         view_id=body["view"]["id"],
         hash=body["view"]["hash"],
-        view=modal.to_slack_view_json()
+        view=modal.to_slack_view_json(),
     )
 
 
@@ -249,9 +240,7 @@ def handle_options(
     modal = modal_type.model_validate_json(private_metadata["value"])
 
     view = modal.render()
-    options = view.blocks._on_block_options(
-        body["block_id"], body["action_id"], query
-    )
+    options = view.blocks._on_block_options(body["block_id"], body["action_id"], query)
     new_state = modal.model_dump_json()
     assert (
         new_state == original_state
