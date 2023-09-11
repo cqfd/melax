@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "melax"
+version = "0.1.0"
+description = ""
+authors = ["cqfd <alan.m.odonnell@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+slack-bolt = "^1.18.0"
+pydantic = "^2.3.0"
+mypy = "^1.5.1"
+pyright = "^1.1.326"
+ruff = "^0.0.287"
+
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.5.1"
+black = "^23.1.0"
+pytest = "^7.2.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
