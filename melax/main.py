@@ -1,25 +1,24 @@
+import datetime
 import json
 import os
+import re
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
+    Callable,
+    ClassVar,
+    Generic,
     Literal,
+    Mapping,
+    Protocol,
+    Self,
+    Sequence,
     TypeVar,
     Union,
-    Generic,
-    Sequence,
-    Mapping,
-    Callable,
     overload,
-    Self,
-    TYPE_CHECKING,
 )
-from dataclasses import dataclass
-
-import re
-
-import datetime
-
-from abc import ABC, abstractmethod
 
 import pydantic
 import pydantic.json
@@ -56,18 +55,33 @@ class Block(ABC, Generic[T]):
     def _on_action(self, action_id: str, action: dict) -> None:
         ...
 
+    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
+        assert isinstance(action, dict)
+        return self._on_action(action_id, action)
+
     @abstractmethod
-    def _on_options(self, action_id: str, action: dict) -> list["Option"]:
+    def _on_options(self, action_id: str, query: str) -> list["Option"]:
         ...
+
+    def _on_block_options(
+        self, block_id: str, action_id: str, query: str
+    ) -> list["Option"]:
+        return self._on_options(action_id, query)
 
     def error(self, msg: str) -> dict[str, str]:
         return {self._block_id: msg}
 
     def __set_name__(self, owner: Any, name: str) -> None:
-        self._block_id = name
+        if not hasattr(self, "_block_id"):
+            self._block_id = name
+        else:
+            self._block_id = f"{name}${self._block_id}"
+
+    # IntoBlocks protocol
+    def _to_slack_blocks(self) -> Sequence[JSON]:
+        return [self._to_slack_json() | {"block_id": self._block_id}]
 
     # Descriptor hack
-
     if TYPE_CHECKING:
 
         @overload
@@ -120,43 +134,38 @@ class Blocks:
     A DSL for building collections of Slack blocks.
     """
 
-    @classmethod
-    def _to_slack_json(cls) -> Sequence[JSON]:
-        return [
-            block._to_slack_json() | {"block_id": name}
-            for name, block in cls.__dict__.items()
-            if isinstance(block, Block)
-        ]
+    _dict: ClassVar["Dict"]
+
+    def __init_subclass__(cls) -> None:
+        cls._dict = Dict(
+            {k: v for k, v in cls.__dict__.items() if isinstance(v, Block | Dict)},
+            rename_children=False,
+        )
 
     @classmethod
-    def _parse(cls, values: object) -> Self:
-        assert isinstance(values, dict)
+    def _parse(cls, value: object) -> Self:
+        p = cls._dict._parse(value)
         self = cls()
-
-        for block_id, block in cls.__dict__.items():
-            if isinstance(block, Block):
-                v = values.get(block_id)
-                if v is None:
-                    setattr(self, block_id, None)
-                else:
-                    assert len(v.keys()) == 1, f"Unexpected value: {v}"
-                    action_id = list(v.keys())[0]
-                    setattr(self, block_id, block._parse(v[action_id]))
-
+        for k, v in p.items():
+            setattr(self, k, v)
         return self
 
     @classmethod
-    def _on_action(cls, block_id: str, action_id: str, action: dict) -> None:
-        getattr(cls, block_id)._on_action(action_id, action)
+    def _to_slack_blocks(cls) -> Sequence[JSON]:
+        return cls._dict._to_slack_blocks()
 
     @classmethod
-    def _on_options(cls, block_id: str, action_id: str, query: str) -> list["Option"]:
-        return getattr(cls, block_id)._on_options(action_id, query)
+    def _on_block_action(cls, block_id: str, action_id: str, action: object) -> None:
+        return cls._dict._on_block_action(block_id, action_id, action)
 
     @classmethod
-    def get(cls, block_id: str) -> Block[Any]:
+    def _on_block_options(cls, block_id: str, action_id: str, query: str) -> list["Option"]:
+        return cls._dict._on_block_options(block_id, action_id, query)
+
+    @classmethod
+    def get(cls, block_id: str) -> Any:
         block = getattr(cls, block_id)
-        assert isinstance(block, Block)
+        assert isinstance(block, Block | Dict)
         return block
 
     @classmethod
@@ -177,6 +186,115 @@ class Blocks:
 
     def __contains__(self, block_id: str) -> bool:
         return hasattr(self, block_id)
+
+
+class Dict:
+    def __init__(self, blocks: dict[str, "IntoBlocks[Any]"], *, rename_children: bool = True) -> None:
+        self.blocks = blocks
+        if rename_children:
+            for block_id, block in blocks.items():
+                block.__set_name__(self, block_id)
+
+    def _to_slack_blocks(self) -> Sequence[JSON]:
+        result = []
+        for block in self.blocks.values():
+            if isinstance(block, Block | Dict):
+                result.extend(block._to_slack_blocks())
+        return result
+
+    def _parse(self, value: object) -> dict[str, Any]:
+        assert isinstance(value, dict)
+        result = {}
+
+        toplevel_keys = {k.split("$")[0] for k in value}
+        assert (
+            self.blocks.keys() >= toplevel_keys
+        ), f"Unexpected keys: {toplevel_keys - self.blocks.keys()}, {value=}"
+
+        for name, block in self.blocks.items():
+            if isinstance(block, Block):
+                v = value.get(name)
+                if v is None:
+                    result[name] = None
+                else:
+                    assert len(v.keys()) == 1, f"Unexpected value: {v}"
+                    action_id = list(v.keys())[0]
+                    result[name] = block._parse(v[action_id])
+            elif isinstance(block, Dict):
+                rec = block._parse(
+                    {
+                        k.removeprefix(f"{name}$"): v
+                        for k, v in value.items()
+                        if k.startswith(f"{name}$")
+                    }
+                )
+                result[name] = rec
+            else:
+                continue
+
+        return result
+
+    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
+        path = block_id.split("$", 1)
+        # ew
+        suffix = "$".join(path[1:])
+        self.blocks[path[0]]._on_block_action(suffix, action_id, action)
+
+    def _on_block_options(
+        self, block_id: str, action_id: str, query: str
+    ) -> list["Option"]:
+        path = block_id.split("$", 1)
+        # ew
+        suffix = "$".join(path[1:])
+        return self.blocks[path[0]]._on_block_options(suffix, action_id, query)
+
+    def __set_name__(self, owner: Any, name: str) -> None:
+        for block in self.blocks.values():
+            block.__set_name__(owner, name)
+
+    def __getitem__(self, key: str) -> Any:
+        return self.blocks[key]
+
+    # Descriptor hack
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(self, obj: "Blocks", objtype: type["Blocks"]) -> dict[str, Any]:
+            ...
+
+        @overload
+        def __get__(self, obj: None, objtype: type["Blocks"]) -> Self:
+            ...
+
+        def __get__(
+            self, obj: "Blocks" | None, objtype: type["Blocks"]
+        ) -> dict[str, Any] | Self:
+            ...
+
+
+class IntoBlocks(Protocol[T]):
+    """
+    A protocol for types that can be converted into a collection of Slack blocks.
+
+    In this model, a form is a tree where each node conforms to IntoBlocks.
+    """
+
+    def _to_slack_blocks(self) -> Sequence[JSON]:
+        ...
+
+    def _parse(self, value: object) -> T:
+        ...
+
+    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
+        ...
+
+    def _on_block_options(
+        self, block_id: str, action_id: str, query: str
+    ) -> list["Option"]:
+        ...
+
+    def __set_name__(self, owner: Any, name: str) -> None:
+        ...
 
 
 Bs = TypeVar("Bs", bound=Blocks)
@@ -241,7 +359,7 @@ def to_slack_view_json(modal: Modal) -> dict[str, Any]:
     return {
         "type": "modal",
         "title": PlainText(view.title)._to_slack_json(),
-        "blocks": view.blocks._to_slack_json(),
+        "blocks": view.blocks._to_slack_blocks(),
         "submit": {"type": "plain_text", "text": view.on_submit[0]},
         "callback_id": "__melax__",
         "private_metadata": json.dumps(
@@ -624,6 +742,13 @@ class ExampleModal(Modal):
                 accessory=Button("Click me!", on_click=self.on_click),
             )
 
+            extra = Dict(
+                dict(
+                    something_else=Input("Something else", PlainTextInput()),
+                    and_one_more=Dict(dict(thing=Input("Thing", PlainTextInput()))),
+                )
+            )
+
         if self.click_count > 2:
             Form.add("wow", Section(PlainText("Wow, you really click a lot!")))
 
@@ -635,6 +760,8 @@ class ExampleModal(Modal):
                 errors.append(Form.fav_number.error("7 isn't a super great number 🙄"))
             if "wow" in form and form.fav_ice_cream == "van":
                 errors.append(Form.get("fav_ice_cream").error("Vanilla is boring!"))
+            if form.extra["and_one_more"]["thing"] != "open sesame":
+                errors.append(Form.extra["and_one_more"]["thing"].error("Guess again 😌"))
             if errors:
                 return Errors(*errors)
 
@@ -746,7 +873,7 @@ def handle_block_actions(
     action = actions[0]
 
     # Run the action handler
-    view.blocks._on_action(action["block_id"], action["action_id"], action)
+    view.blocks._on_block_action(action["block_id"], action["action_id"], action)
     # And then *re*-render the modal, since its state may have changed!
     client.views_update(
         view_id=body["view"]["id"],
@@ -768,7 +895,7 @@ def handle_options(
     modal = modal_type.model_validate_json(private_metadata["value"])
 
     view = modal.render()
-    options = view.blocks._on_options(
+    options = view.blocks._on_block_options(
         body["block_id"], body["action_id"], body["value"]
     )
     new_state = modal.model_dump_json()
