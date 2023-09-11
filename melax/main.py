@@ -134,11 +134,11 @@ class Blocks:
     A DSL for building collections of Slack blocks.
     """
 
-    _dict: ClassVar["Dict"]
+    _dict: ClassVar["NestedBlocks"]
 
     def __init_subclass__(cls) -> None:
-        cls._dict = Dict(
-            {k: v for k, v in cls.__dict__.items() if isinstance(v, Block | Dict)},
+        cls._dict = NestedBlocks(
+            {k: v for k, v in cls.__dict__.items() if isinstance(v, Block | NestedBlocks)},
             rename_children=False,
         )
 
@@ -165,7 +165,7 @@ class Blocks:
     @classmethod
     def get(cls, block_id: str) -> Any:
         block = getattr(cls, block_id)
-        assert isinstance(block, Block | Dict)
+        assert isinstance(block, Block | NestedBlocks)
         return block
 
     @classmethod
@@ -188,8 +188,8 @@ class Blocks:
         return hasattr(self, block_id)
 
 
-class Dict:
-    def __init__(self, blocks: dict[str, "IntoBlocks[Any]"], *, rename_children: bool = True) -> None:
+class NestedBlocks(Generic[T]):
+    def __init__(self, blocks: Mapping[str, "IntoBlocks[T]"], *, rename_children: bool = True) -> None:
         self.blocks = blocks
         if rename_children:
             for block_id, block in blocks.items():
@@ -198,7 +198,7 @@ class Dict:
     def _to_slack_blocks(self) -> Sequence[JSON]:
         result = []
         for block in self.blocks.values():
-            if isinstance(block, Block | Dict):
+            if isinstance(block, Block | NestedBlocks):
                 result.extend(block._to_slack_blocks())
         return result
 
@@ -220,7 +220,7 @@ class Dict:
                     assert len(v.keys()) == 1, f"Unexpected value: {v}"
                     action_id = list(v.keys())[0]
                     result[name] = block._parse(v[action_id])
-            elif isinstance(block, Dict):
+            elif isinstance(block, NestedBlocks):
                 rec = block._parse(
                     {
                         k.removeprefix(f"{name}$"): v
@@ -270,6 +270,10 @@ class Dict:
             self, obj: "Blocks" | None, objtype: type["Blocks"]
         ) -> dict[str, Any] | Self:
             ...
+
+
+def nested(**blocks: "IntoBlocks[T]") -> NestedBlocks[T]:
+    return NestedBlocks(blocks=blocks)
 
 
 class IntoBlocks(Protocol[T]):
@@ -742,11 +746,9 @@ class ExampleModal(Modal):
                 accessory=Button("Click me!", on_click=self.on_click),
             )
 
-            extra = Dict(
-                dict(
-                    something_else=Input("Something else", PlainTextInput()),
-                    and_one_more=Dict(dict(thing=Input("Thing", PlainTextInput()))),
-                )
+            extra = nested(
+                something_else=Input("Something else", PlainTextInput()),
+                and_one_more=nested(thing=Input("Thing", PlainTextInput())),
             )
 
         if self.click_count > 2:
@@ -759,7 +761,7 @@ class ExampleModal(Modal):
             if form.fav_number == 7:
                 errors.append(Form.fav_number.error("7 isn't a super great number 🙄"))
             if "wow" in form and form.fav_ice_cream == "van":
-                errors.append(Form.get("fav_ice_cream").error("Vanilla is boring!"))
+                errors.append(Form.fav_ice_cream.error("Vanilla is boring!"))
             if form.extra["and_one_more"]["thing"] != "open sesame":
                 errors.append(Form.extra["and_one_more"]["thing"].error("Guess again 😌"))
             if errors:
