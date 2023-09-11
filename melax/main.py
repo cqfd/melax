@@ -43,7 +43,7 @@ class Block(ABC, Generic[T]):
     _block_id: str
 
     @abstractmethod
-    def _parse(self, value: object) -> T:
+    def _parse(self, payload: object) -> T:
         ...
 
     @abstractmethod
@@ -102,23 +102,38 @@ class Element(ABC, Generic[T]):
 
     _callback: Callable[[T], None] | None = None
 
+    @property
     @abstractmethod
-    def _parse(self, value: object) -> T:
+    def _payload_path(self) -> list[str]:
+        """Path to extract the payload from an action dict (slack isn't
+        consistent about this across element types)"""
+        ...
+
+    @abstractmethod
+    def _parse_payload(self, payload: object) -> T:
         ...
 
     @abstractmethod
     def _to_slack_json(self) -> Mapping[str, JSON]:
         ...
 
-    @abstractmethod
-    def _extract_action_value(self, action_id: str, action: dict) -> T:
-        """Extract the value from an action dict (slack isn't consistent about
-        this across element types)"""
-        ...
+    def _parse(self, value: object) -> T:
+        payload = self._extract_payload(value)
+        return self._parse_payload(payload)
 
-    # Why am I passing an action_id here?
-    def _on_action(self, action_id: str, action: dict) -> None:
-        value = self._extract_action_value(action_id, action)
+    def _extract_payload(self, value: object) -> object:
+        if value is None:
+            return None
+
+        assert isinstance(value, dict)
+        v = value
+        for k in self._payload_path:
+            v = v[k]
+        return v
+
+    def _on_action(self, action: dict) -> None:
+        payload = self._extract_payload(action)
+        value = self._parse_payload(payload)
         if self._callback is not None:
             self._callback(value)
 
@@ -137,13 +152,17 @@ class Blocks:
 
     def __init_subclass__(cls) -> None:
         cls._dict = NestedBlocks(
-            {k: v for k, v in cls.__dict__.items() if isinstance(v, Block | NestedBlocks)},
+            {
+                k: v
+                for k, v in cls.__dict__.items()
+                if isinstance(v, Block | NestedBlocks)
+            },
             rename_children=False,
         )
 
     @classmethod
-    def _parse(cls, value: object) -> Self:
-        p = cls._dict._parse(value)
+    def _parse(cls, payload: object) -> Self:
+        p = cls._dict._parse(payload)
         self = cls()
         for k, v in p.items():
             setattr(self, k, v)
@@ -158,7 +177,9 @@ class Blocks:
         return cls._dict._on_block_action(block_id, action_id, action)
 
     @classmethod
-    def _on_block_options(cls, block_id: str, action_id: str, query: str) -> list["Option"]:
+    def _on_block_options(
+        cls, block_id: str, action_id: str, query: str
+    ) -> list["Option"]:
         return cls._dict._on_block_options(block_id, action_id, query)
 
     @classmethod
@@ -188,7 +209,9 @@ class Blocks:
 
 
 class NestedBlocks(Generic[T]):
-    def __init__(self, blocks: Mapping[str, "IntoBlocks[T]"], *, rename_children: bool = True) -> None:
+    def __init__(
+        self, blocks: Mapping[str, "IntoBlocks[T]"], *, rename_children: bool = True
+    ) -> None:
         self.blocks = blocks
         if rename_children:
             for block_id, block in blocks.items():
@@ -201,21 +224,22 @@ class NestedBlocks(Generic[T]):
                 result.extend(block._to_slack_blocks())
         return result
 
-    def _parse(self, value: object) -> dict[str, Any]:
-        assert isinstance(value, dict)
+    def _parse(self, payload: object) -> dict[str, Any]:
+        assert isinstance(payload, dict)
         result = {}
 
-        toplevel_keys = {k.split("$")[0] for k in value}
+        toplevel_keys = {k.split("$")[0] for k in payload}
         assert (
             self.blocks.keys() >= toplevel_keys
-        ), f"Unexpected keys: {toplevel_keys - self.blocks.keys()}, {value=}"
+        ), f"Unexpected keys: {toplevel_keys - self.blocks.keys()}, {payload=}"
 
         for name, block in self.blocks.items():
             if isinstance(block, Block):
-                v = value.get(name)
+                v = payload.get(name)
                 if v is None:
-                    result[name] = None
+                    result[name] = block._parse(None)
                 else:
+                    assert isinstance(v, dict)
                     assert len(v.keys()) == 1, f"Unexpected value: {v}"
                     action_id = list(v.keys())[0]
                     result[name] = block._parse(v[action_id])
@@ -223,7 +247,7 @@ class NestedBlocks(Generic[T]):
                 rec = block._parse(
                     {
                         k.removeprefix(f"{name}$"): v
-                        for k, v in value.items()
+                        for k, v in payload.items()
                         if k.startswith(f"{name}$")
                     }
                 )
@@ -271,13 +295,12 @@ class NestedBlocks(Generic[T]):
             ...
 
 
-def nested(**blocks: "IntoBlocks[T]") -> NestedBlocks[T]:
-    return NestedBlocks(blocks=blocks)
-
-
 IntoBlocks = Union[Block[T], NestedBlocks[T]]
 
-Bs = TypeVar("Bs", bound=Blocks)
+
+def nested(**blocks: IntoBlocks[T]) -> NestedBlocks[T]:
+    return NestedBlocks(blocks=blocks)
+
 
 OnSubmit = Union[
     "Modal",  # continue being a (possibly different) modal
@@ -285,6 +308,9 @@ OnSubmit = Union[
     "Push",  # push a new modal
     None,  # finish, clearing the whole modal stack.
 ]
+
+
+Bs = TypeVar("Bs", bound=Blocks)
 
 
 class View:
@@ -342,7 +368,7 @@ def to_slack_view_json(modal: Modal) -> dict[str, Any]:
         "blocks": view.blocks._to_slack_blocks(),
         "submit": {"type": "plain_text", "text": view.on_submit[0]},
         "callback_id": "__melax__",
-        "private_metadata": json.dumps(
+        "private_metadata": json.dumps(  # <- needs to be a string
             {"type": modal.__class__.__name__, "value": modal.model_dump_json()}
         ),
     }
@@ -368,6 +394,20 @@ class PlainText:
 Text = Mrkdwn | PlainText
 
 
+class Divider(Block[None]):
+    def _parse(self, payload: object) -> None:
+        return None
+
+    def _to_slack_json(self) -> Mapping[str, JSON]:
+        return {"type": "divider"}
+
+    def _on_action(self, action_id: str, action: dict) -> None:
+        raise Exception(f"Dividers can't respond to actions: {action_id=} {action=}")
+
+    def _on_options(self, action_id: str, query: str) -> None:
+        raise Exception(f"Dividers can't respond to options: {action_id=} {query=}")
+
+
 class Section(Block[T]):
     @overload
     def __init__(
@@ -389,11 +429,12 @@ class Section(Block[T]):
         self.fields = fields
         self.accessory = accessory
 
-    def _parse(self, value: object) -> T:
+    def _parse(self, payload: object) -> T:
         if self.accessory is None:
+            assert payload is None, f"Unexpected payload: {payload}"
             return None  # type: ignore
 
-        return self.accessory._parse(value)
+        return self.accessory._parse(payload)
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         j = {
@@ -410,7 +451,7 @@ class Section(Block[T]):
 
     def _on_action(self, action_id: str, action: dict) -> None:
         assert self.accessory is not None
-        return self.accessory._on_action(action_id, action)
+        return self.accessory._on_action(action)
 
     def _on_options(self, action_id: str, query: str) -> list["Option"]:
         assert self.accessory is not None
@@ -447,14 +488,14 @@ class Input(Block[T]):
             "dispatch_action": self.element._callback is not None,
         }
 
-    def _parse(self, value: object) -> T:
-        if self.optional and value is None:
+    def _parse(self, payload: object) -> T:
+        if self.optional and payload is None:
             return None  # type: ignore
 
-        return self.element._parse(value)
+        return self.element._parse(payload)
 
     def _on_action(self, action_id: str, action: dict) -> None:
-        return self.element._on_action(action_id, action)
+        return self.element._on_action(action)
 
     def _on_options(self, action_id: str, query: str) -> list["Option"]:
         return self.element._on_options(query)
@@ -502,13 +543,12 @@ class Button(Element[T]):
 
         self._callback = _on_click if on_click is not None else None  # type: ignore
 
-    def _parse(self, value: object) -> T:
-        assert isinstance(value, dict)
-        if "value" in value:
-            assert self.value == value["value"]
-            return self.value  # type: ignore
+    @property
+    def _payload_path(self) -> list[str]:
+        return ["value"]
 
-        return None  # type: ignore
+    def _parse_payload(self, payload: object) -> T:
+        return self.value  # type: ignore
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -516,12 +556,6 @@ class Button(Element[T]):
             "text": PlainText(self.text)._to_slack_json(),
             **({"value": self.value} if self.value is not None else {}),
         }
-
-    def _extract_action_value(self, action_id: str, action: dict) -> T:
-        if self.value is not None:
-            return action["value"]  # type: ignore
-        else:
-            return None  # type: ignore
 
 
 class DatePicker(Element[datetime.date]):
@@ -539,9 +573,9 @@ class DatePicker(Element[datetime.date]):
         self.placeholder = placeholder
         self._callback = on_selection
 
-    def _parse(self, value: object) -> datetime.date:
-        assert isinstance(value, dict)
-        return datetime.datetime.strptime(value["selected_date"], "%Y-%m-%d").date()
+    def _parse_payload(self, payload: object) -> datetime.date:
+        assert isinstance(payload, str)
+        return datetime.datetime.strptime(payload, "%Y-%m-%d").date()
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -558,10 +592,9 @@ class DatePicker(Element[datetime.date]):
             ),
         }
 
-    # can this be simplified to just specifying the key value?
-    # not sure yet
-    def _extract_action_value(self, action_id: str, action: dict) -> datetime.date:
-        return datetime.datetime.strptime(action["selected_date"], "%Y-%m-%d").date()
+    @property
+    def _payload_path(self) -> list[str]:
+        return ["selected_date"]
 
 
 class PlainTextInput(Element[str]):
@@ -591,15 +624,13 @@ class PlainTextInput(Element[str]):
             j["placeholder"] = PlainText(self.placeholder)._to_slack_json()
         return j
 
-    def _parse(self, value: object) -> str:
-        assert isinstance(value, dict)
-        v = value["value"]
-        assert isinstance(v, str)
-        return v
+    def _parse_payload(self, payload: object) -> str:
+        assert isinstance(payload, str)
+        return payload
 
-    def _extract_action_value(self, action_id: str, action: dict) -> str:
-        return action["value"]
-
+    @property
+    def _payload_path(self) -> list[str]:
+        return ["value"]
 
 class NumberInput(Element[T]):
     """
@@ -627,22 +658,16 @@ class NumberInput(Element[T]):
             "is_decimal_allowed": self.is_decimal_allowed,
         }
 
-    def _parse(self, value: object) -> T:
-        assert isinstance(value, dict)
-        v = value["value"]
-        assert isinstance(v, str)
+    def _parse_payload(self, payload: object) -> T:
+        assert isinstance(payload, str)
         if self.is_decimal_allowed:
-            return float(v)  # type: ignore
+            return float(payload)  # type: ignore
         else:
-            return int(v)  # type: ignore
+            return int(payload)  # type: ignore
 
-    def _extract_action_value(self, action_id: str, action: dict) -> T:
-        v = action["value"]
-        assert isinstance(v, str)
-        if self.is_decimal_allowed:
-            return float(v)  # type: ignore
-        else:
-            return int(v)  # type: ignore
+    @property
+    def _payload_path(self) -> list[str]:
+        return ["value"]
 
 
 @dataclass
@@ -690,12 +715,13 @@ class Select(Element[str]):
             ),
         }
 
-    def _parse(self, value: object) -> str:
-        assert isinstance(value, dict)
-        return value["selected_option"]["value"]
+    def _parse_payload(self, payload: object) -> str:
+        assert isinstance(payload, str)
+        return payload
 
-    def _extract_action_value(self, action_id: str, action: dict) -> str:
-        return action["selected_option"]["value"]
+    @property
+    def _payload_path(self) -> list[str]:
+        return ["selected_option", "value"]
 
 
 class ExampleModal(Modal):
@@ -719,8 +745,10 @@ class ExampleModal(Modal):
 
             clickable = Section(
                 PlainText("I'm hopefully clickable"),
-                accessory=Button("Click me!", on_click=self.on_click),
+                accessory=Button("Click me!", value="42", on_click=self.on_click),
             )
+
+            _divider = Divider()
 
             extra = nested(
                 something_else=Input("Something else", PlainTextInput()),
@@ -739,7 +767,9 @@ class ExampleModal(Modal):
             if "wow" in form and form.fav_ice_cream == "van":
                 errors.append(Form.fav_ice_cream.error("Vanilla is boring!"))
             if form.extra["and_one_more"]["thing"] != "open sesame":
-                errors.append(Form.extra["and_one_more"]["thing"].error("Guess again 😌"))
+                errors.append(
+                    Form.extra["and_one_more"]["thing"].error("Guess again 😌")
+                )
             if errors:
                 return Errors(*errors)
 
@@ -760,8 +790,8 @@ class ExampleModal(Modal):
         print(f"{query=}")
         return [Option("Chocolate", "choc"), Option("Vanilla", "van")]
 
-    def on_click(self) -> None:
-        print("Clicked")
+    def on_click(self, value: str) -> None:
+        print(f"Clicked {value=}")
         self.click_count += 1
 
     def on_date_picked(self, d: datetime.date) -> None:
