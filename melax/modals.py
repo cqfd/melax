@@ -137,7 +137,7 @@ class Blocks:
     A DSL for building collections of Slack blocks.
     """
 
-    _dict: ClassVar["NestedBlocks"]
+    _dict: ClassVar["NestedBlocks[dict[str, Any], str]"]
 
     def __init_subclass__(cls) -> None:
         cls._dict = NestedBlocks(
@@ -197,11 +197,39 @@ class Blocks:
         return hasattr(self, block_id)
 
 
-class NestedBlocks:
+K = TypeVar("K")
+X = TypeVar("X", covariant=True)
+
+
+class NestedBlocks(Generic[T, K]):
+    @overload
     def __init__(
-        self, blocks: Mapping[str, "IntoBlocks"], *, rename_children: bool = True
+        self: "NestedBlocks[dict[str, T], str]",
+        blocks: Mapping[str, "IntoBlocks[T]"],
+        *,
+        rename_children: bool = True,
+    ) -> None:
+        ...
+
+    @overload
+    def __init__(
+        self,
+        blocks: Mapping[str, "IntoBlocks[X]"],
+        *,
+        xform: Callable[[dict[str, X]], T],
+        rename_children: bool = True,
+    ) -> None:
+        ...
+
+    def __init__(
+        self,
+        blocks: Mapping[str, "IntoBlocks[X]"],
+        *,
+        xform: Callable[[dict[str, X]], T] | None = None,
+        rename_children: bool = True,
     ) -> None:
         self.blocks = blocks
+        self.xform = xform
         if rename_children:
             for block_id, block in blocks.items():
                 block.__set_name__(self, block_id)
@@ -213,7 +241,7 @@ class NestedBlocks:
                 result.extend(block._to_slack_blocks())
         return result
 
-    def _parse(self, payload: object) -> dict[str, Any]:
+    def _parse(self, payload: object) -> T:
         assert isinstance(payload, dict)
         result = {}
 
@@ -232,7 +260,7 @@ class NestedBlocks:
                     assert len(v.keys()) == 1, f"Unexpected value: {v}"
                     action_id = list(v.keys())[0]
                     result[name] = block._parse(v[action_id])
-            elif isinstance(block, NestedBlocks):
+            else:
                 rec = block._parse(
                     {
                         k.removeprefix(f"{name}$"): v
@@ -242,7 +270,9 @@ class NestedBlocks:
                 )
                 result[name] = rec
 
-        return result
+        if self.xform is None:
+            return result  # type: ignore
+        return self.xform(result)
 
     def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
         path = block_id.split("$", 1)
@@ -262,31 +292,76 @@ class NestedBlocks:
         for block in self.blocks.values():
             block.__set_name__(owner, name)
 
-    def __getitem__(self, key: str) -> Any:
-        return self.blocks[key]
+    # this techincally should return IntoBlocks[Any], or something like that,
+    # but it's pretty annoying to use (all you're going to do is use it to set
+    # errors)
+    def __getitem__(self, key: K) -> Any:
+        # yikes
+        if isinstance(key, int):
+            return list(self.blocks.values())[key]
+        else:
+            return self.blocks[str(key)]
 
     # Descriptor hack
     if TYPE_CHECKING:
 
         @overload
-        def __get__(self, obj: "Blocks", objtype: type["Blocks"]) -> dict[str, Any]:
+        def __get__(self, obj: "Blocks", objtype: type["Blocks"]) -> T:
             ...
 
         @overload
         def __get__(self, obj: None, objtype: type["Blocks"]) -> Self:
             ...
 
-        def __get__(
-            self, obj: "Blocks" | None, objtype: type["Blocks"]
-        ) -> dict[str, Any] | Self:
+        def __get__(self, obj: "Blocks" | None, objtype: type["Blocks"]) -> T | Self:
             ...
 
 
-IntoBlocks = Union[Block[Any], NestedBlocks]
+IntoBlocks = Union[Block[T], NestedBlocks[T, str]]
 
 
-def nested(**blocks: IntoBlocks) -> NestedBlocks:
-    return NestedBlocks(blocks=blocks)
+def nested(**blocks: IntoBlocks[T]) -> NestedBlocks[dict[str, T], str]:
+    # Not sure why pyright makes me pass a dummy xform here
+    return NestedBlocks(blocks=blocks, xform=lambda ts: ts)
+
+
+T1 = TypeVar("T1", covariant=True)
+T2 = TypeVar("T2", covariant=True)
+T3 = TypeVar("T3", covariant=True)
+
+
+@overload
+def sequence(b1: tuple[str, IntoBlocks[T1]], /) -> NestedBlocks[tuple[T1], int]:
+    ...
+
+
+@overload
+def sequence(
+    b1: tuple[str, IntoBlocks[T1]], b2: tuple[str, IntoBlocks[T2]], /
+) -> NestedBlocks[tuple[T1, T2], int]:
+    ...
+
+
+@overload
+def sequence(
+    b1: tuple[str, IntoBlocks[T1]],
+    b2: tuple[str, IntoBlocks[T2]],
+    b3: tuple[str, IntoBlocks[T3]],
+    /,
+) -> NestedBlocks[tuple[T1, T2, T3], int]:
+    ...
+
+
+@overload
+def sequence(*bs: tuple[str, IntoBlocks[T]]) -> NestedBlocks[tuple[T, ...], int]:
+    ...
+
+
+# not sure why I need Any here :/
+def sequence(*bs: Any) -> Any:
+    return NestedBlocks(
+        blocks={k: v for (k, v) in bs}, xform=lambda xs: tuple(xs.values())
+    )
 
 
 OnSubmit = Union[

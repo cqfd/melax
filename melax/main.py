@@ -28,6 +28,7 @@ from .modals import (
     Button,
     DatePicker,
     NumberInput,
+    sequence,
     _modals,
 )
 
@@ -50,6 +51,11 @@ class ExampleModal(Modal):
             dob = Input("Date of birth", DatePicker(on_selection=self.on_date_picked))
 
             fav_number = Input("Favorite number", NumberInput(is_decimal_allowed=False))
+
+            fav_things = sequence(
+                ("first", Input("Favorite thing 1", PlainTextInput())),
+                ("second", Input("Favorite thing 2", PlainTextInput())),
+            )
 
             fav_ice_cream = Input(
                 "Favorite ice cream",
@@ -97,8 +103,18 @@ class ExampleModal(Modal):
                 errors.append(Form.fav_number.error("7 is a bad number"))
             if "wow" in form and form.fav_ice_cream == "van":
                 errors.append(Form.fav_ice_cream.error("Ew, vanilla"))
-            if form.extra["and_one_more"]["thing"] != "open sesame":
+            and_one_more = form.extra["and_one_more"]
+            assert isinstance(and_one_more, dict)
+            if and_one_more["thing"] != "open sesame":
                 errors.append(Form.extra["and_one_more"]["thing"].error("Guess again"))
+            if form.fav_things[0] == form.fav_things[1]:
+                errors.extend(
+                    [
+                        Form.fav_things[0].error("Can't be the same"),
+                        Form.fav_things[1].error("Can't be the same"),
+                    ]
+                )
+            print(f"{errors=}")
             if errors:
                 return Errors(*errors)
 
