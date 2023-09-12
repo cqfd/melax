@@ -67,7 +67,6 @@ class Block(ABC, Generic[T]):
         else:
             self._block_id = f"{name}${self._block_id}"
 
-    # IntoBlocks protocol
     def _to_slack_blocks(self) -> Sequence[JSON]:
         return [self._to_slack_json() | {"block_id": self._block_id}]
 
