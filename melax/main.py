@@ -21,6 +21,7 @@ from .modals import (
     Section,
     PlainText,
     nested,
+    when,
     OnSubmit,
     Errors,
     Push,
@@ -75,10 +76,17 @@ class ExampleModal(Modal):
 
             clickable = Section(
                 PlainText("I'm hopefully clickable"),
-                accessory=Button("Click me!", value="42").callback(self.on_click),
+                accessory=Button("Click me!", value="42")
+                .map(lambda x: -int(x))
+                .callback(self.on_click),
             )
 
             _divider = Divider().map(lambda _: 123)
+
+            wow = when(
+                self.click_count > 2,
+                Section(PlainText(f"Click count: {self.click_count}")),
+            )
 
             # nesting is one escape valve from static types: you can do
             # whatever dynamic things you want when determing what keys to
@@ -88,12 +96,6 @@ class ExampleModal(Modal):
                 something_else=Input("Something else", PlainTextInput()),
                 and_one_more=nested(thing=Input("Thing", PlainTextInput())),
             )
-
-        # render of course has access to the modal's state
-        if self.click_count > 2:
-            # Eh, experimenting with escape hatches from type-safety, when you
-            # want to do something super dynamic. Don't really like this.
-            Form.add("wow", Section(PlainText("Wow, you really click a lot!")))
 
         # Here the magic is that mypy knows everything about `form`!
         # Bit weird-looking that on_submit is nested inside the render method,
@@ -107,14 +109,18 @@ class ExampleModal(Modal):
             # blocks, which means it's slightly trickier to understand what their
             # block_ids are.
             errors = []
+
             if form.fav_number == 7:
                 errors.append(Form.fav_number.error("7 is a bad number"))
-            if "wow" in form and form.fav_ice_cream is IceCream.VANILLA:
+
+            if form.fav_ice_cream is IceCream.VANILLA:
                 errors.append(Form.fav_ice_cream.error("Ew, vanilla"))
+
             and_one_more = form.extra["and_one_more"]
             assert isinstance(and_one_more, dict)
             if and_one_more["thing"] != "open sesame":
                 errors.append(Form.extra["and_one_more"]["thing"].error("Guess again"))
+
             if form.fav_things[0] == form.fav_things[1]:
                 errors.extend(
                     [
@@ -122,6 +128,7 @@ class ExampleModal(Modal):
                         Form.fav_things[1].error("Can't be the same"),
                     ]
                 )
+
             print(f"{errors=}")
             if errors:
                 return Errors(*errors)
@@ -146,7 +153,7 @@ class ExampleModal(Modal):
         print(f"{query=}")
         return [Option(text=flavor.name, value=flavor.value) for flavor in IceCream]
 
-    def on_click(self, value: str) -> None:
+    def on_click(self, value: int) -> None:
         print(f"Clicked {value=}")
         # the modal will be re-rendered after action callbacks
         self.click_count += 1
@@ -182,7 +189,7 @@ def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> 
     m = ExampleModal()
 
     j = m.to_slack_view_json()
-    print(json.dumps(j, indent=2))
+    # print(json.dumps(j, indent=2))
 
     client.views_open(
         trigger_id=body["trigger_id"],
@@ -194,7 +201,7 @@ def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> 
 def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     context.ack()
 
-    print(json.dumps(body, indent=2))
+    # print(json.dumps(body, indent=2))
 
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
@@ -226,7 +233,7 @@ def handle_block_actions(
 ) -> None:
     context.ack()
 
-    print(json.dumps(body, indent=2))
+    # print(json.dumps(body, indent=2))
 
     actions = body["actions"]
     assert len(actions) == 1, f"Weird, got more than one action: {actions}"
@@ -254,7 +261,7 @@ def handle_options(
     context: BoltContext, body: dict[str, Any], client: WebClient
 ) -> None:
     context.ack()
-    print(json.dumps(body, indent=2))
+    # print(json.dumps(body, indent=2))
 
     query = body["value"]
 

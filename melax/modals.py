@@ -186,17 +186,13 @@ class Blocks:
     A DSL for building collections of Slack blocks.
     """
 
-    _dict: ClassVar["NestedBlocks[dict[str, Any], str]"]
+    _dict: ClassVar["NestedBlocks[Mapping[str, Any]]"]
 
     def __init_subclass__(cls) -> None:
-        cls._dict = NestedBlocks(
-            {
-                k: v
-                for k, v in cls.__dict__.items()
-                if isinstance(v, Block | NestedBlocks)
-            },
-            rename_children=False,
-        )
+        blocks: Mapping[str, IntoBlocks[Any]] = {
+            k: v for k, v in cls.__dict__.items() if isinstance(v, Block | NestedBlocks)
+        }
+        cls._dict = NestedBlocks(blocks, rename_children=False)
 
     @classmethod
     def _parse(cls, payload: object) -> Self:
@@ -220,41 +216,13 @@ class Blocks:
     ) -> list["Option"]:
         return cls._dict._on_block_options(block_id, action_id, query)
 
-    @classmethod
-    def get(cls, block_id: str) -> Any:
-        block = getattr(cls, block_id)
-        assert isinstance(block, Block | NestedBlocks)
-        return block
 
-    @classmethod
-    def add(
-        cls,
-        block_id: str,
-        block: Block[Any],
-        *,
-        after: str | None = None,
-        before: str | None = None,
-    ) -> None:
-        assert block_id not in cls.__dict__, f"Block {block_id} already exists"
-        block.__set_name__(cls, block_id)
-        setattr(cls, block_id, block)
-
-    def __getitem__(self, block_id: str) -> Any:
-        return getattr(self, block_id)
-
-    def __contains__(self, block_id: str) -> bool:
-        return hasattr(self, block_id) and isinstance(
-            getattr(self, block_id), Block | NestedBlocks
-        )
-
-
-K = TypeVar("K")
 X = TypeVar("X", covariant=True)
 
 
-class NestedBlocks(Generic[T, K], Mappable[T]):
+class NestedBlocks(Mappable[T]):
     def __init__(
-        self: "NestedBlocks[dict[str, T], str]",
+        self: "NestedBlocks[dict[str, X]]",
         blocks: Mapping[str, "IntoBlocks[X]"],
         *,
         rename_children: bool = True,
@@ -264,6 +232,16 @@ class NestedBlocks(Generic[T, K], Mappable[T]):
         if rename_children:
             for block_id, block in blocks.items():
                 block.__set_name__(self, block_id)
+
+    if TYPE_CHECKING:
+
+        def __new__(
+            cls,
+            blocks: Mapping[str, "IntoBlocks[X]"],
+            *,
+            rename_children: bool = True,
+        ) -> "NestedBlocks[dict[str, X]]":
+            ...
 
     def _to_slack_blocks(self) -> Sequence[JSON]:
         result: list[JSON] = []
@@ -324,14 +302,12 @@ class NestedBlocks(Generic[T, K], Mappable[T]):
     # this techincally should return IntoBlocks[Any], or something like that,
     # but it's pretty annoying to use (all you're going to do is use it to set
     # errors)
-    def __getitem__(self, key: K) -> Any:
-        # yikes
+    def __getitem__(self, key: Any) -> Any:
         if isinstance(key, int):
             return list(self.blocks.values())[key]
-        else:
-            return self.blocks[str(key)]
+        return self.blocks[str(key)]
 
-    def map(self, f: Callable[[T], U]) -> "NestedBlocks[U, K]":
+    def map(self, f: Callable[[T], U]) -> "NestedBlocks[U]":
         u = deepcopy(self)
         u._xform = lambda x: f(self._xform(x))  # type: ignore
         return u  # type: ignore
@@ -351,15 +327,18 @@ class NestedBlocks(Generic[T, K], Mappable[T]):
             ...
 
 
-IntoBlocks = Union[Block[T], NestedBlocks[T, str]]
+IntoBlocks = Union[Block[T], NestedBlocks[T]]
 """
 A value of type IntoBlocks[T] is a recipe for some number of blocks that will
 eventually produce a value of type T once the user submits the modal.
 """
 
+# Combinators
 
-def nested(**blocks: IntoBlocks[T]) -> NestedBlocks[dict[str, T], str]:
-    return NestedBlocks(blocks=blocks)
+
+def nested(**blocks: IntoBlocks[T]) -> NestedBlocks[dict[str, T]]:
+    # Not sure why mypy doesn't like this (pyright thinks it's fine)
+    return NestedBlocks(blocks=blocks)  # type: ignore
 
 
 T1 = TypeVar("T1", covariant=True)
@@ -368,19 +347,19 @@ T3 = TypeVar("T3", covariant=True)
 
 
 @overload
-def sequence() -> NestedBlocks[tuple[()], int]:
+def sequence() -> NestedBlocks[tuple[()]]:
     ...
 
 
 @overload
-def sequence(b1: tuple[str, IntoBlocks[T1]], /) -> NestedBlocks[tuple[T1], int]:
+def sequence(b1: tuple[str, IntoBlocks[T1]], /) -> NestedBlocks[tuple[T1]]:
     ...
 
 
 @overload
 def sequence(
     b1: tuple[str, IntoBlocks[T1]], b2: tuple[str, IntoBlocks[T2]], /
-) -> NestedBlocks[tuple[T1, T2], int]:
+) -> NestedBlocks[tuple[T1, T2]]:
     ...
 
 
@@ -390,7 +369,7 @@ def sequence(
     b2: tuple[str, IntoBlocks[T2]],
     b3: tuple[str, IntoBlocks[T3]],
     /,
-) -> NestedBlocks[tuple[T1, T2, T3], int]:
+) -> NestedBlocks[tuple[T1, T2, T3]]:
     ...
 
 
@@ -398,13 +377,30 @@ def sequence(
 
 
 @overload
-def sequence(*bs: tuple[str, IntoBlocks[T]]) -> NestedBlocks[tuple[T, ...], int]:
+def sequence(*bs: tuple[str, IntoBlocks[T]]) -> NestedBlocks[tuple[T, ...]]:
     ...
 
 
 # not sure why I need Any here :/
 def sequence(*bs: Any) -> Any:
-    return NestedBlocks({k: v for (k, v) in bs}).map(lambda xs: tuple(xs.values()))
+    return NestedBlocks(blocks=dict(bs)).map(lambda x: tuple(x.values()))
+
+
+@overload
+def when(condition: Literal[True], b: IntoBlocks[T]) -> IntoBlocks[T]:
+    ...
+
+
+@overload
+def when(condition: bool, b: IntoBlocks[T]) -> IntoBlocks[T | None]:
+    ...
+
+
+def when(condition: bool, b: IntoBlocks[T]) -> IntoBlocks[T | None]:
+    if condition:
+        return b
+    else:
+        return nested().map(lambda _: None)
 
 
 OnSubmit = Union[
@@ -512,6 +508,12 @@ Text = Mrkdwn | PlainText
 class Divider(Block[T]):
     def __init__(self: "Divider[None]") -> None:
         super().__init__()
+
+    # ugh, pyright doesn't handle self annotations the same way mypy does
+    if TYPE_CHECKING:
+
+        def __new__(cls) -> "Divider[None]":
+            ...
 
     def _parse(self, payload: object) -> T:
         return None  # type: ignore
@@ -706,6 +708,16 @@ class DatePicker(Element[T]):
         self.initial_date = initial_date
         self.placeholder = placeholder
 
+    # ugh, pyright doesn't handle self annotations the same way mypy does
+    if TYPE_CHECKING:
+
+        def __new__(
+            cls,
+            initial_date: datetime.date | None = None,
+            placeholder: str | None = None,
+        ) -> "DatePicker[datetime.date]":
+            ...
+
     def _parse_payload(self, payload: object) -> datetime.date:
         assert isinstance(payload, str)
         return datetime.datetime.strptime(payload, "%Y-%m-%d").date()
@@ -739,7 +751,6 @@ class DatePicker(Element[T]):
         assert isinstance(u, self.__class__)
         return u
 
-reveal_type(DatePicker())
 
 class PlainTextInput(Element[T]):
     """
@@ -758,6 +769,18 @@ class PlainTextInput(Element[T]):
         self.multiline = multiline
         self.focus_on_load = focus_on_load
         self.placeholder = placeholder
+
+    # ugh, pyright doesn't handle self annotations the same way mypy does
+    if TYPE_CHECKING:
+
+        def __new__(
+            cls,
+            initial_value: str | None = None,
+            multiline: bool = False,
+            focus_on_load: bool = False,
+            placeholder: str | None = None,
+        ) -> "PlainTextInput[str]":
+            ...
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -862,6 +885,17 @@ class Select(Element[T]):
         super().__init__()
         self.options = options
         self.placeholder = placeholder
+
+    # ugh, pyright doesn't handle self annotations the same way mypy does
+    if TYPE_CHECKING:
+
+        def __new__(
+            cls,
+            *,
+            options: list[Option] | Callable[[str], list[Option]],
+            placeholder: str | None = None,
+        ) -> "Select[str]":
+            ...
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
