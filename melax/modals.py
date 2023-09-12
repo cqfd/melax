@@ -19,7 +19,6 @@ from typing import (
 )
 
 import pydantic
-import pydantic.json
 
 T = TypeVar("T", covariant=True)
 U = TypeVar("U")
@@ -28,16 +27,41 @@ JSON = int | float | bool | str | None | Sequence["JSON"] | Mapping[str, "JSON"]
 ### Core types:
 
 
-class Block(ABC, Generic[T]):
+class Mappable(ABC, Generic[T]):
+    """
+    Mixin to make a type "mappable", i.e. a functor.
+    """
+
+    _xform: Callable[[Any], T]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._xform = lambda x: x
+
+    # Despite having an implementation, `map` is still an abstractmethod.
+    # Subclasses should implement it by calling super(), but they should
+    # give their implementation a more accurate return type:
+    #
+    #   def map(self, f: Callable[[T], U]) -> "MoreSpecificType[U]":
+    #     u = super().map(f)
+    #     assert isinstance(u, self.__class__)
+    #     return u
+    #
+    # This trick gives a uniform way of implementing map on all subclases
+    # while getting accurate types, with just a bit of boilerplate.
+    @abstractmethod
+    def map(self, f: Callable[[T], U]) -> "Mappable[U]":
+        u = deepcopy(self)
+        u._xform = lambda x: f(self._xform(x))  # type: ignore
+        return u  # type: ignore
+
+
+class Block(Mappable[T]):
     """
     https://api.slack.com/reference/block-kit/blocks?ref=bk
     """
 
     _block_id: str
-    _xform: Callable[[Any], T]
-
-    def __init__(self) -> None:
-        self._xform = lambda x: x
 
     @abstractmethod
     def _parse(self, payload: object) -> T:
@@ -79,11 +103,6 @@ class Block(ABC, Generic[T]):
     def _to_slack_blocks(self) -> Sequence[JSON]:
         return [self._to_slack_json() | {"block_id": self._block_id}]
 
-    def map(self, f: Callable[[T], U]) -> "Block[U]":
-        u = deepcopy(self)
-        u._xform = lambda x: f(self._xform(x))  # type: ignore
-        return u  # type: ignore
-
     # Descriptor hack
     if TYPE_CHECKING:
 
@@ -99,16 +118,15 @@ class Block(ABC, Generic[T]):
             ...
 
 
-class Element(ABC, Generic[T]):
+class Element(Mappable[T]):
     """
     https://api.slack.com/reference/block-kit/block-elements
     """
 
     _callback: Callable[[Any], None] | None
-    _xform: Callable[[Any], T]
 
     def __init__(self) -> None:
-        self._xform = lambda x: x
+        super().__init__()
         self._callback = None
 
     @property
@@ -125,6 +143,20 @@ class Element(ABC, Generic[T]):
     @abstractmethod
     def _to_slack_json(self) -> Mapping[str, JSON]:
         ...
+
+    # As with map above, subclasses should implement callback by calling
+    # super(), but they should provide a more accurate return type.
+    @abstractmethod
+    def callback(self, cb: Callable[[T], None]) -> "Element[T]":
+        copy = deepcopy(self)
+
+        def _callback(t: Any) -> None:
+            if self._callback is not None:
+                self._callback(t)
+            cb(t)
+
+        copy._callback = _callback
+        return copy
 
     def _parse(self, value: object) -> T:
         payload = self._extract_payload(value)
@@ -147,22 +179,6 @@ class Element(ABC, Generic[T]):
 
     def _on_options(self, query: str) -> list["Option"]:
         raise Exception(f"Can't get options for element of type {self.__class__}")
-
-    def map(self, f: Callable[[T], U]) -> "Element[U]":
-        u = deepcopy(self)
-        u._xform = lambda x: f(self._xform(x))  # type: ignore
-        return u  # type: ignore
-
-    def callback(self, cb: Callable[[T], None]) -> "Element[T]":
-        copy = deepcopy(self)
-
-        def _callback(t: Any) -> None:
-            if self._callback is not None:
-                self._callback(t)
-            cb(t)
-
-        copy._callback = _callback
-        return copy
 
 
 class Blocks:
@@ -236,17 +252,15 @@ K = TypeVar("K")
 X = TypeVar("X", covariant=True)
 
 
-class NestedBlocks(Generic[T, K]):
-    _xform: Callable[[Any], T]
-
+class NestedBlocks(Generic[T, K], Mappable[T]):
     def __init__(
         self: "NestedBlocks[dict[str, T], str]",
         blocks: Mapping[str, "IntoBlocks[X]"],
         *,
         rename_children: bool = True,
     ) -> None:
+        super().__init__()
         self.blocks = blocks
-        self._xform = lambda x: x
         if rename_children:
             for block_id, block in blocks.items():
                 block.__set_name__(self, block_id)
@@ -720,6 +734,12 @@ class DatePicker(Element[T]):
         assert isinstance(u, self.__class__)
         return u
 
+    def callback(self, cb: Callable[[T], None]) -> "DatePicker[T]":
+        u = super().callback(cb)
+        assert isinstance(u, self.__class__)
+        return u
+
+reveal_type(DatePicker())
 
 class PlainTextInput(Element[T]):
     """
