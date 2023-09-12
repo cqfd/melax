@@ -55,7 +55,7 @@ class ExampleModal(Modal):
         class Form(Blocks):
             name = Input("Name" + "!" * self.click_count, PlainTextInput())
 
-            dob = Input("Date of birth", DatePicker(on_selection=self.on_date_picked))
+            dob = Input("Date of birth", DatePicker().callback(self.on_date_picked))
 
             fav_number = Input("Favorite number", NumberInput(is_decimal_allowed=False))
 
@@ -68,13 +68,14 @@ class ExampleModal(Modal):
                 "Favorite ice cream",
                 Select(
                     options=self.fav_ice_cream_options,
-                    on_selection=self.on_ice_cream_picked,
-                ).map(lambda x: IceCream(x))
+                )
+                .map(lambda x: IceCream(x))
+                .callback(self.on_ice_cream_picked),
             )
 
             clickable = Section(
                 PlainText("I'm hopefully clickable"),
-                accessory=Button("Click me!", value="42", on_click=self.on_click),
+                accessory=Button("Click me!", value="42").callback(self.on_click),
             )
 
             _divider = Divider().map(lambda _: 123)
@@ -153,7 +154,7 @@ class ExampleModal(Modal):
     def on_date_picked(self, d: datetime.date) -> None:
         print(f"Date picked: {d=}")
 
-    def on_ice_cream_picked(self, flavor: str) -> None:
+    def on_ice_cream_picked(self, flavor: IceCream) -> None:
         print(f"Ice cream picked: {flavor=}")
 
 
