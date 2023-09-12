@@ -3,6 +3,7 @@ import re
 import datetime
 import json
 
+from enum import Enum
 from typing import Any
 
 from slack_bolt import App
@@ -31,6 +32,12 @@ from .modals import (
     sequence,
     _modals,
 )
+
+
+class IceCream(Enum):
+    CHOCOLATE = "chocolate"
+    VANILLA = "vanilla"
+    STRAWBERRY = "strawberry"
 
 
 class ExampleModal(Modal):
@@ -62,7 +69,7 @@ class ExampleModal(Modal):
                 Select(
                     options=self.fav_ice_cream_options,
                     on_selection=self.on_ice_cream_picked,
-                ),
+                ).map(lambda x: IceCream(x))
             )
 
             clickable = Section(
@@ -70,7 +77,7 @@ class ExampleModal(Modal):
                 accessory=Button("Click me!", value="42", on_click=self.on_click),
             )
 
-            _divider = Divider()
+            _divider = Divider().map(lambda _: 123)
 
             # nesting is one escape valve from static types: you can do
             # whatever dynamic things you want when determing what keys to
@@ -101,7 +108,7 @@ class ExampleModal(Modal):
             errors = []
             if form.fav_number == 7:
                 errors.append(Form.fav_number.error("7 is a bad number"))
-            if "wow" in form and form.fav_ice_cream == "van":
+            if "wow" in form and form.fav_ice_cream is IceCream.VANILLA:
                 errors.append(Form.fav_ice_cream.error("Ew, vanilla"))
             and_one_more = form.extra["and_one_more"]
             assert isinstance(and_one_more, dict)
@@ -136,7 +143,7 @@ class ExampleModal(Modal):
 
     def fav_ice_cream_options(self, query: str) -> list[Option]:
         print(f"{query=}")
-        return [Option("Chocolate", "choc"), Option("Vanilla", "van")]
+        return [Option(text=flavor.name, value=flavor.value) for flavor in IceCream]
 
     def on_click(self, value: str) -> None:
         print(f"Clicked {value=}")
