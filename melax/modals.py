@@ -332,6 +332,10 @@ T1 = TypeVar("T1", covariant=True)
 T2 = TypeVar("T2", covariant=True)
 T3 = TypeVar("T3", covariant=True)
 
+@overload
+def sequence() -> NestedBlocks[tuple[()], int]:
+    ...
+
 
 @overload
 def sequence(b1: tuple[str, IntoBlocks[T1]], /) -> NestedBlocks[tuple[T1], int]:
