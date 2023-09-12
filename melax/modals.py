@@ -317,6 +317,10 @@ class NestedBlocks(Generic[T, K]):
 
 
 IntoBlocks = Union[Block[T], NestedBlocks[T, str]]
+"""
+A value of type IntoBlocks[T] is a recipe for some number of blocks that will
+eventually produce a value of type T once the user submits the modal.
+"""
 
 
 def nested(**blocks: IntoBlocks[T]) -> NestedBlocks[dict[str, T], str]:
