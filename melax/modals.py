@@ -513,7 +513,7 @@ class Divider(Block[T]):
 
     def map(self, f: Callable[[T], U]) -> "Divider[U]":
         u = super().map(f)
-        assert isinstance(u, Divider)
+        assert isinstance(u, self.__class__)
         return u
 
 
@@ -570,7 +570,7 @@ class Section(Block[T]):
 
     def map(self, f: Callable[[T], U]) -> "Section[U]":
         u = super().map(f)
-        assert isinstance(u, Section)
+        assert isinstance(u, self.__class__)
         return u
 
 
@@ -619,7 +619,7 @@ class Input(Block[T]):
 
     def map(self, f: Callable[[T], U]) -> "Input[U]":
         u = super().map(f)
-        assert isinstance(u, Input)
+        assert isinstance(u, self.__class__)
         return u
 
 
@@ -669,12 +669,12 @@ class Button(Element[T]):
 
     def map(self, f: Callable[[T], U]) -> "Button[U]":
         u = super().map(f)
-        assert isinstance(u, Button)
+        assert isinstance(u, self.__class__)
         return u
 
     def callback(self, cb: Callable[[T], None]) -> "Button[T]":
         u = super().callback(cb)
-        assert isinstance(u, Button)
+        assert isinstance(u, self.__class__)
         return u
 
 
@@ -717,7 +717,7 @@ class DatePicker(Element[T]):
 
     def map(self, f: Callable[[T], U]) -> "DatePicker[U]":
         u = super().map(f)
-        assert isinstance(u, DatePicker)
+        assert isinstance(u, self.__class__)
         return u
 
 
@@ -879,7 +879,7 @@ class Select(Element[T]):
 
     def map(self, f: Callable[[T], U]) -> "Select[U]":
         u = super().map(f)
-        assert isinstance(u, Select)
+        assert isinstance(u, self.__class__)
         return u
 
     def callback(self, cb: Callable[[T], None]) -> "Select[T]":
