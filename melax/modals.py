@@ -673,8 +673,8 @@ class Button(Element[T]):
     def _payload_path(self) -> list[str]:
         return ["value"]
 
-    def _parse_payload(self, payload: object) -> T:
-        return self.value  # type: ignore
+    def _parse_payload(self, payload: object) -> str | None:
+        return self.value
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -840,12 +840,12 @@ class NumberInput(Element[T]):
             "is_decimal_allowed": self.is_decimal_allowed,
         }
 
-    def _parse_payload(self, payload: object) -> T:
+    def _parse_payload(self, payload: object) -> float | int:
         assert isinstance(payload, str)
         if self.is_decimal_allowed:
-            return float(payload)  # type: ignore
+            return float(payload)
         else:
-            return int(payload)  # type: ignore
+            return int(payload)
 
     @property
     def _payload_path(self) -> list[str]:
