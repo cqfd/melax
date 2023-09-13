@@ -14,7 +14,7 @@ from slack_sdk import WebClient
 from .modals import (
     Modal,
     View,
-    Blocks,
+    Builder,
     Input,
     Select,
     Divider,
@@ -53,7 +53,7 @@ class ExampleModal(Modal):
         # Declare a collection of blocks, in such a way that the on_submit
         # below can get nice type-safety. (Looks weird to declare a new class
         # inside the render method, but it works.)
-        class Form(Blocks):
+        class Form(Builder):
             name = Input("Name" + "!" * self.click_count, PlainTextInput())
 
             dob = Input("Date of birth", DatePicker().callback(self.on_date_picked))
@@ -169,7 +169,7 @@ class NiceToMeetYouModal(Modal):
     name: str
 
     def render(self) -> View:
-        class Form(Blocks):
+        class Form(Builder):
             msg = Section(PlainText(f"Nice to meet you {self.name}!"))
 
         return View(

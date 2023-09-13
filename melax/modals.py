@@ -107,14 +107,14 @@ class Block(Mappable[T]):
     if TYPE_CHECKING:
 
         @overload
-        def __get__(self, obj: "Blocks", objtype: type["Blocks"]) -> T:
+        def __get__(self, obj: "Builder", objtype: type["Builder"]) -> T:
             ...
 
         @overload
-        def __get__(self, obj: None, objtype: type["Blocks"]) -> Self:
+        def __get__(self, obj: None, objtype: type["Builder"]) -> Self:
             ...
 
-        def __get__(self, obj: "Blocks" | None, objtype: type["Blocks"]) -> T | Self:
+        def __get__(self, obj: "Builder" | None, objtype: type["Builder"]) -> T | Self:
             ...
 
 
@@ -181,7 +181,7 @@ class Element(Mappable[T]):
         raise Exception(f"Can't get options for element of type {self.__class__}")
 
 
-class Blocks:
+class Builder:
     """
     A DSL for building collections of Slack blocks.
     """
@@ -316,14 +316,14 @@ class NestedBlocks(Mappable[T]):
     if TYPE_CHECKING:
 
         @overload
-        def __get__(self, obj: "Blocks", objtype: type["Blocks"]) -> T:
+        def __get__(self, obj: "Builder", objtype: type["Builder"]) -> T:
             ...
 
         @overload
-        def __get__(self, obj: None, objtype: type["Blocks"]) -> Self:
+        def __get__(self, obj: None, objtype: type["Builder"]) -> Self:
             ...
 
-        def __get__(self, obj: "Blocks" | None, objtype: type["Blocks"]) -> T | Self:
+        def __get__(self, obj: "Builder" | None, objtype: type["Builder"]) -> T | Self:
             ...
 
 
@@ -414,7 +414,7 @@ Your options for what to do after the user submits a modal.
 """
 
 
-Bs = TypeVar("Bs", bound=Blocks)
+Bs = TypeVar("Bs", bound=Builder)
 
 
 class View:
