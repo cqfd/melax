@@ -189,7 +189,7 @@ class Builder:
     _dict: ClassVar["NestedBlocks[Mapping[str, Any]]"]
 
     def __init_subclass__(cls) -> None:
-        blocks: Mapping[str, IntoBlocks[Any]] = {
+        blocks: Mapping[str, Blocks[Any]] = {
             k: v for k, v in cls.__dict__.items() if isinstance(v, Block | NestedBlocks)
         }
         cls._dict = NestedBlocks(blocks, rename_children=False)
@@ -223,7 +223,7 @@ X = TypeVar("X", covariant=True)
 class NestedBlocks(Mappable[T]):
     def __init__(
         self: "NestedBlocks[dict[str, X]]",
-        blocks: Mapping[str, "IntoBlocks[X]"],
+        blocks: Mapping[str, "Blocks[X]"],
         *,
         rename_children: bool = True,
     ) -> None:
@@ -237,7 +237,7 @@ class NestedBlocks(Mappable[T]):
 
         def __new__(
             cls,
-            blocks: Mapping[str, "IntoBlocks[X]"],
+            blocks: Mapping[str, "Blocks[X]"],
             *,
             rename_children: bool = True,
         ) -> "NestedBlocks[dict[str, X]]":
@@ -299,7 +299,7 @@ class NestedBlocks(Mappable[T]):
         for block in self.blocks.values():
             block.__set_name__(owner, name)
 
-    # this techincally should return IntoBlocks[Any], or something like that,
+    # this techincally should return Blocks[Any], or something like that,
     # but it's pretty annoying to use (all you're going to do is use it to set
     # errors)
     def __getitem__(self, key: Any) -> Any:
@@ -327,16 +327,16 @@ class NestedBlocks(Mappable[T]):
             ...
 
 
-IntoBlocks = Union[Block[T], NestedBlocks[T]]
+Blocks = Union[Block[T], NestedBlocks[T]]
 """
-A value of type IntoBlocks[T] is a recipe for some number of blocks that will
+A value of type Blocks[T] is a recipe for some number of blocks that will
 eventually produce a value of type T once the user submits the modal.
 """
 
 # Combinators
 
 
-def nested(**blocks: IntoBlocks[T]) -> NestedBlocks[dict[str, T]]:
+def nested(**blocks: Blocks[T]) -> NestedBlocks[dict[str, T]]:
     # Not sure why mypy doesn't like this (pyright thinks it's fine)
     return NestedBlocks(blocks=blocks)  # type: ignore
 
@@ -352,22 +352,22 @@ def sequence() -> NestedBlocks[tuple[()]]:
 
 
 @overload
-def sequence(b1: tuple[str, IntoBlocks[T1]], /) -> NestedBlocks[tuple[T1]]:
+def sequence(b1: tuple[str, Blocks[T1]], /) -> NestedBlocks[tuple[T1]]:
     ...
 
 
 @overload
 def sequence(
-    b1: tuple[str, IntoBlocks[T1]], b2: tuple[str, IntoBlocks[T2]], /
+    b1: tuple[str, Blocks[T1]], b2: tuple[str, Blocks[T2]], /
 ) -> NestedBlocks[tuple[T1, T2]]:
     ...
 
 
 @overload
 def sequence(
-    b1: tuple[str, IntoBlocks[T1]],
-    b2: tuple[str, IntoBlocks[T2]],
-    b3: tuple[str, IntoBlocks[T3]],
+    b1: tuple[str, Blocks[T1]],
+    b2: tuple[str, Blocks[T2]],
+    b3: tuple[str, Blocks[T3]],
     /,
 ) -> NestedBlocks[tuple[T1, T2, T3]]:
     ...
@@ -377,7 +377,7 @@ def sequence(
 
 
 @overload
-def sequence(*bs: tuple[str, IntoBlocks[T]]) -> NestedBlocks[tuple[T, ...]]:
+def sequence(*bs: tuple[str, Blocks[T]]) -> NestedBlocks[tuple[T, ...]]:
     ...
 
 
@@ -387,16 +387,16 @@ def sequence(*bs: Any) -> Any:
 
 
 @overload
-def when(condition: Literal[True], b: IntoBlocks[T]) -> IntoBlocks[T]:
+def when(condition: Literal[True], b: Blocks[T]) -> Blocks[T]:
     ...
 
 
 @overload
-def when(condition: bool, b: IntoBlocks[T]) -> IntoBlocks[T | None]:
+def when(condition: bool, b: Blocks[T]) -> Blocks[T | None]:
     ...
 
 
-def when(condition: bool, b: IntoBlocks[T]) -> IntoBlocks[T | None]:
+def when(condition: bool, b: Blocks[T]) -> Blocks[T | None]:
     if condition:
         return b
     else:
