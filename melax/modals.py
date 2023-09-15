@@ -103,6 +103,11 @@ class Block(Mappable[T]):
     def _to_slack_blocks(self) -> Sequence[JSON]:
         return [self._to_slack_json() | {"block_id": self._block_id}]
 
+    def map(self, f: Callable[[T], U]) -> "Block[U]":
+        u = super().map(f)
+        assert isinstance(u, self.__class__)
+        return u
+
     # Descriptor hack
     if TYPE_CHECKING:
 
@@ -471,7 +476,7 @@ class Modal(ABC, pydantic.BaseModel):
     def __init_subclass__(cls) -> None:
         _modals[cls.__name__] = cls
 
-    def to_slack_view_json(self) -> dict[str, Any]:
+    def _to_slack_view_json(self) -> dict[str, Any]:
         view = self.render()
         return {
             "type": "modal",

@@ -48,13 +48,17 @@ class ExampleModal(Modal):
 
     # The modal's state.
     click_count: int = 0
+    name: str | None = None
 
     def render(self) -> View:
         # Declare a collection of blocks, in such a way that the on_submit
         # below can get nice type-safety. (Looks weird to declare a new class
         # inside the render method, but it works.)
         class Form(Builder):
-            name = Input("Name" + "!" * self.click_count, PlainTextInput())
+            name = Input(
+                "Name" + "!" * self.click_count,
+                PlainTextInput().callback(self.on_name_changed),
+            )
 
             dob = Input("Date of birth", DatePicker().callback(self.on_date_picked))
 
@@ -141,13 +145,17 @@ class ExampleModal(Modal):
 
         # Finally, render returns a View that bundles everything together.
         return View(
-            title="Example",
+            title="Example" if self.name is None else f"Hello {self.name}!",
             # The blocks specification is the Form *class*; the on_submit
             # handler will receive an instance. Looks weird but actually
             # works pretty well in terms of types.
             blocks=Form,
             on_submit=("Click me!", on_submit),
         )
+
+    def on_name_changed(self, name: str) -> None:
+        print(f"Name changed: {name=}")
+        self.name = name
 
     def fav_ice_cream_options(self, query: str) -> list[Option]:
         print(f"{query=}")
@@ -188,7 +196,7 @@ def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> 
 
     m = ExampleModal()
 
-    j = m.to_slack_view_json()
+    j = m._to_slack_view_json()
     # print(json.dumps(j, indent=2))
 
     client.views_open(
@@ -220,11 +228,11 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
         case None:
             context.ack(response_action="clear")
         case Push(next_modal):
-            context.ack(response_action="push", view=next_modal.to_slack_view_json())
+            context.ack(response_action="push", view=next_modal._to_slack_view_json())
         case Errors(errors):
             context.ack(response_action="errors", errors=errors)
         case next_modal:
-            context.ack(response_action="update", view=next_modal.to_slack_view_json())
+            context.ack(response_action="update", view=next_modal._to_slack_view_json())
 
 
 @app.action(re.compile(r".*"))
@@ -233,7 +241,7 @@ def handle_block_actions(
 ) -> None:
     context.ack()
 
-    # print(json.dumps(body, indent=2))
+    print(json.dumps(body, indent=2))
 
     actions = body["actions"]
     assert len(actions) == 1, f"Weird, got more than one action: {actions}"
@@ -252,7 +260,7 @@ def handle_block_actions(
     client.views_update(
         view_id=body["view"]["id"],
         hash=body["view"]["hash"],
-        view=modal.to_slack_view_json(),
+        view=modal._to_slack_view_json(),
     )
 
 
@@ -261,7 +269,7 @@ def handle_options(
     context: BoltContext, body: dict[str, Any], client: WebClient
 ) -> None:
     context.ack()
-    # print(json.dumps(body, indent=2))
+    print(json.dumps(body, indent=2))
 
     query = body["value"]
 
