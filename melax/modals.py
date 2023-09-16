@@ -56,59 +56,7 @@ class Mappable(ABC, Generic[T]):
         return u  # type: ignore
 
 
-class Block(Mappable[T]):
-    """
-    https://api.slack.com/reference/block-kit/blocks?ref=bk
-    """
-
-    _block_id: str
-
-    @abstractmethod
-    def _parse(self, payload: object) -> T:
-        ...
-
-    def parse(self, payload: object) -> T:
-        return self._xform(self._parse(payload))
-
-    @abstractmethod
-    def _to_slack_json(self) -> Mapping[str, JSON]:
-        ...
-
-    @abstractmethod
-    def _on_action(self, action_id: str, action: object) -> None:
-        ...
-
-    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
-        assert isinstance(action, dict)
-        return self._on_action(action_id, action)
-
-    @abstractmethod
-    def _on_options(self, action_id: str, query: str) -> list["Option"]:
-        ...
-
-    def _on_block_options(
-        self, block_id: str, action_id: str, query: str
-    ) -> list["Option"]:
-        return self._on_options(action_id, query)
-
-    def error(self, msg: str) -> dict[str, str]:
-        return {self._block_id: msg}
-
-    def __set_name__(self, owner: Any, name: str) -> None:
-        if not hasattr(self, "_block_id"):
-            self._block_id = name
-        else:
-            self._block_id = f"{name}${self._block_id}"
-
-    def _to_slack_blocks(self) -> Sequence[JSON]:
-        return [self._to_slack_json() | {"block_id": self._block_id}]
-
-    def map(self, f: Callable[[T], U]) -> "Block[U]":
-        u = super().map(f)
-        assert isinstance(u, self.__class__)
-        return u
-
-    # Descriptor hack
+class DescriptorHack(Generic[T]):
     if TYPE_CHECKING:
 
         @overload
@@ -123,31 +71,150 @@ class Block(Mappable[T]):
             ...
 
 
+@dataclass
+class Ok(Generic[T]):
+    value: T
+
+
+@dataclass
+class Errors:
+    errors: dict[str, str]
+
+    def __init__(self, *errors: dict[str, str]) -> None:
+        self.errors = {
+            block_id: msg for error in errors for block_id, msg in error.items()
+        }
+
+
+Parsed = Ok[T] | Errors | None
+"""
+A Parsed[T] is either an Ok[T] if parsing went well, some Errors if
+parsing poorly, or None if parsing was skipped (e.g. because some part
+of a modal hasn't even been filled in yet).
+"""
+
+
+class Blocks(Mappable[T], DescriptorHack[T]):
+    """
+    A value of type Blocks[T] is a recipe for some number of blocks that will
+    eventually produce a value of type T once the user submits the modal.
+    """
+
+    @abstractmethod
+    def _extract(self, payload: object) -> Parsed[object]:
+        ...
+
+    def _parse(self, payload: object) -> Parsed[T]:
+        raw = self._extract(payload)
+        if isinstance(raw, Ok):
+            return Ok(self._xform(raw.value))
+        else:
+            return raw
+
+    @abstractmethod
+    def _to_slack_blocks(self) -> Sequence[JSON]:
+        ...
+
+    @abstractmethod
+    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
+        ...
+
+    @abstractmethod
+    def _on_block_options(
+        self, block_id: str, action_id: str, query: str
+    ) -> list["Option"]:
+        ...
+
+    @abstractmethod
+    def __set_name__(self, owner: Any, name: str) -> None:
+        ...
+
+    # Type-specific boilerplate
+    def map(self, f: Callable[[T], U]) -> "Blocks[U]":
+        u = super().map(f)
+        assert isinstance(u, self.__class__)
+        return u
+
+
+class Block(Blocks[T]):
+    """
+    https://api.slack.com/reference/block-kit/blocks?ref=bk
+    """
+
+    _block_id: str | None = None
+
+    def _to_slack_blocks(self) -> Sequence[JSON]:
+        if self._block_id is None:
+            return [self._to_slack_json()]
+        else:
+            return [{"block_id": self._block_id} | self._to_slack_json()]
+
+    @abstractmethod
+    def _to_slack_json(self) -> Mapping[str, JSON]:
+        ...
+
+    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
+        return self._on_action(action_id, action)
+
+    @abstractmethod
+    def _on_action(self, action_id: str, action: object) -> None:
+        ...
+
+    def _on_block_options(
+        self, block_id: str, action_id: str, query: str
+    ) -> list["Option"]:
+        return self._on_options(action_id, query)
+
+    @abstractmethod
+    def _on_options(self, action_id: str, query: str) -> list["Option"]:
+        ...
+
+    def __set_name__(self, owner: Any, name: str) -> None:
+        if self._block_id is None:
+            self._block_id = name
+        else:
+            self._block_id = f"{name}${self._block_id}"
+
+    # Type-specific boilerplate
+    def map(self, f: Callable[[T], U]) -> "Block[U]":
+        u = super().map(f)
+        assert isinstance(u, self.__class__)
+        return u
+
+
 class Element(Mappable[T]):
     """
     https://api.slack.com/reference/block-kit/block-elements
     """
 
-    _callback: Callable[[Any], None] | None
+    _callback: Callable[[T], None] | None
 
     def __init__(self) -> None:
         super().__init__()
         self._callback = None
 
-    @property
-    @abstractmethod
-    def _payload_path(self) -> list[str]:
-        """Path to extract the payload from an action dict (slack isn't
-        consistent about this across element types)"""
-        ...
+    def _parse(self, payload: object) -> Ok[T] | None:
+        raw = self._extract(payload)
+        if raw is None:
+            return None
+        return Ok(self._xform(raw.value))
 
     @abstractmethod
-    def _parse_payload(self, payload: object) -> object:
+    def _extract(self, payload: object) -> Ok[object] | None:
         ...
 
     @abstractmethod
     def _to_slack_json(self) -> Mapping[str, JSON]:
         ...
+
+    def _on_options(self, query: str) -> list["Option"]:
+        raise Exception(f"Can't get options for element of type {self.__class__}")
+
+    def _on_action(self, action: object) -> None:
+        p = self._parse(action)
+        assert p is not None, f"Failed to parse: {action=}"
+        if self._callback is not None:
+            self._callback(p.value)
 
     # As with map above, subclasses should implement callback by calling
     # super(), but they should provide a more accurate return type.
@@ -155,35 +222,14 @@ class Element(Mappable[T]):
     def callback(self, cb: Callable[[T], None]) -> "Element[T]":
         copy = deepcopy(self)
 
-        def _callback(t: Any) -> None:
+        # mypy complains about covariance, but it's ok
+        def _callback(t: T) -> None:  # type: ignore
             if self._callback is not None:
                 self._callback(t)
             cb(t)
 
         copy._callback = _callback
         return copy
-
-    def _parse(self, value: object) -> T:
-        payload = self._extract_payload(value)
-        return self._xform(self._parse_payload(payload))
-
-    def _extract_payload(self, value: object) -> object:
-        if value is None:
-            return None
-
-        assert isinstance(value, dict)
-        v = value
-        for k in self._payload_path:
-            v = v[k]
-        return v
-
-    def _on_action(self, action: object) -> None:
-        value = self._parse(action)
-        if self._callback is not None:
-            self._callback(value)
-
-    def _on_options(self, query: str) -> list["Option"]:
-        raise Exception(f"Can't get options for element of type {self.__class__}")
 
 
 class Builder:
@@ -195,17 +241,22 @@ class Builder:
 
     def __init_subclass__(cls) -> None:
         blocks: Mapping[str, Blocks[Any]] = {
-            k: v for k, v in cls.__dict__.items() if isinstance(v, Block | NestedBlocks)
+            k: v for k, v in cls.__dict__.items() if isinstance(v, Blocks)
         }
         cls._dict = NestedBlocks(blocks, rename_children=False)
 
     @classmethod
-    def _parse(cls, payload: object) -> Self:
+    def _parse(cls, payload: object) -> Parsed[Self]:
         p = cls._dict._parse(payload)
+        if p is None:
+            return None
+        if isinstance(p, Errors):
+            return p
+
         self = cls()
-        for k, v in p.items():
+        for k, v in p.value.items():
             setattr(self, k, v)
-        return self
+        return Ok(self)
 
     @classmethod
     def _to_slack_blocks(cls) -> Sequence[JSON]:
@@ -225,7 +276,9 @@ class Builder:
 X = TypeVar("X", covariant=True)
 
 
-class NestedBlocks(Mappable[T]):
+class NestedBlocks(Blocks[T]):
+    _name: str | None
+
     def __init__(
         self: "NestedBlocks[dict[str, X]]",
         blocks: Mapping[str, "Blocks[X]"],
@@ -233,6 +286,7 @@ class NestedBlocks(Mappable[T]):
         rename_children: bool = True,
     ) -> None:
         super().__init__()
+        self._name = None
         self.blocks = blocks
         if rename_children:
             for block_id, block in blocks.items():
@@ -251,44 +305,49 @@ class NestedBlocks(Mappable[T]):
     def _to_slack_blocks(self) -> Sequence[JSON]:
         result: list[JSON] = []
         for block in self.blocks.values():
-            if isinstance(block, Block | NestedBlocks):
+            if isinstance(block, Blocks):
                 result.extend(block._to_slack_blocks())
         return result
 
-    def _parse(self, payload: object) -> T:
+    def _extract(self, payload: object) -> Parsed[object]:
         assert isinstance(payload, dict)
-        result = {}
 
         toplevel_keys = {k.split("$")[0] for k in payload}
         assert (
             self.blocks.keys() >= toplevel_keys
         ), f"Unexpected keys: {toplevel_keys - self.blocks.keys()}, {payload=}"
 
+        result = {}
+        errors: dict[str, str] = {}
         for name, block in self.blocks.items():
             if isinstance(block, Block):
-                v = payload.get(name)
-                if v is None:
-                    result[name] = block.parse(None)
-                else:
-                    assert isinstance(v, dict)
-                    assert len(v.keys()) == 1, f"Unexpected value: {v}"
-                    action_id = list(v.keys())[0]
-                    result[name] = block._parse(v[action_id])
+                v = {k: v for k, v in payload.items() if k == name}
             else:
-                rec = block._parse(
-                    {
-                        k.removeprefix(f"{name}$"): v
-                        for k, v in payload.items()
-                        if k.startswith(f"{name}$")
-                    }
-                )
-                result[name] = rec
+                v = {
+                    k.removeprefix(f"{name}$"): v
+                    for k, v in payload.items()
+                    if k.startswith(f"{name}$")
+                }
+            p = block._parse(v)
+            match p:
+                case None:
+                    print(f"Failed to parse: {name=} {block=} {v=}")
+                    return None
+                case Errors(es):
+                    errors |= es
+                case Ok(x):
+                    result[name] = x
 
-        return self._xform(result)
+        if errors:
+            return Errors(errors)
+
+        print(f"{payload=}")
+        print(f"{result=}")
+        print()
+        return Ok(result)
 
     def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
         path = block_id.split("$", 1)
-        # ew
         suffix = "$".join(path[1:])
         self.blocks[path[0]]._on_block_action(suffix, action_id, action)
 
@@ -296,11 +355,15 @@ class NestedBlocks(Mappable[T]):
         self, block_id: str, action_id: str, query: str
     ) -> list["Option"]:
         path = block_id.split("$", 1)
-        # ew
         suffix = "$".join(path[1:])
         return self.blocks[path[0]]._on_block_options(suffix, action_id, query)
 
     def __set_name__(self, owner: Any, name: str) -> None:
+        if self._name is None:
+            self._name = name
+        else:
+            self._name = f"{name}${self._name}"
+
         for block in self.blocks.values():
             block.__set_name__(owner, name)
 
@@ -312,31 +375,12 @@ class NestedBlocks(Mappable[T]):
             return list(self.blocks.values())[key]
         return self.blocks[str(key)]
 
+    # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "NestedBlocks[U]":
         u = deepcopy(self)
         u._xform = lambda x: f(self._xform(x))  # type: ignore
         return u  # type: ignore
 
-    # Descriptor hack
-    if TYPE_CHECKING:
-
-        @overload
-        def __get__(self, obj: "Builder", objtype: type["Builder"]) -> T:
-            ...
-
-        @overload
-        def __get__(self, obj: None, objtype: type["Builder"]) -> Self:
-            ...
-
-        def __get__(self, obj: "Builder" | None, objtype: type["Builder"]) -> T | Self:
-            ...
-
-
-Blocks = Union[Block[T], NestedBlocks[T]]
-"""
-A value of type Blocks[T] is a recipe for some number of blocks that will
-eventually produce a value of type T once the user submits the modal.
-"""
 
 # Combinators
 
@@ -419,19 +463,21 @@ Your options for what to do after the user submits a modal.
 """
 
 
-Bs = TypeVar("Bs", bound=Builder)
+SomeBuilderSubclass = TypeVar("SomeBuilderSubclass", bound=Builder)
 
 
 class View:
     """
     Bundles a collection of blocks with a submit handler, in a type-safe way.
+
+    https://api.slack.com/reference/surfaces/views
     """
 
     def __init__(
         self,
         title: str,
-        blocks: type[Bs],
-        on_submit: tuple[(str, Callable[[Bs], "OnSubmit"])],
+        blocks: type[SomeBuilderSubclass],
+        on_submit: tuple[(str, Callable[[SomeBuilderSubclass], "OnSubmit"])],
     ) -> None:
         self.title = title
         self.blocks = blocks
@@ -445,16 +491,6 @@ class Push:
     """
 
     modal: "Modal"
-
-
-@dataclass
-class Errors:
-    errors: dict[str, str]
-
-    def __init__(self, *errors: dict[str, str]) -> None:
-        self.errors = {
-            block_id: msg for error in errors for block_id, msg in error.items()
-        }
 
 
 _modals: dict[str, type["Modal"]] = {}
@@ -507,7 +543,7 @@ class PlainText:
         return {"type": "plain_text", "text": self.text, "emoji": self.emoji}
 
 
-Text = Mrkdwn | PlainText
+Text = Union[Mrkdwn, PlainText]
 
 
 class Divider(Block[T]):
@@ -520,8 +556,8 @@ class Divider(Block[T]):
         def __new__(cls) -> "Divider[None]":
             ...
 
-    def _parse(self, payload: object) -> T:
-        return None  # type: ignore
+    def _extract(self, payload: object) -> Parsed[None]:
+        return Ok(None)
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {"type": "divider"}
@@ -532,6 +568,7 @@ class Divider(Block[T]):
     def _on_options(self, action_id: str, query: str) -> list["Option"]:
         raise Exception(f"Dividers can't respond to options: {action_id=} {query=}")
 
+    # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "Divider[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
@@ -539,33 +576,66 @@ class Divider(Block[T]):
 
 
 class Section(Block[T]):
+    """
+    https://api.slack.com/reference/block-kit/blocks#section
+    """
+
     @overload
-    def __init__(self: "Section[None]", text: Text, fields: list[Text] = []) -> None:
+    def __init__(
+        self: "Section[None]", text: str | Text, fields: list[Text] = []
+    ) -> None:
         ...
 
     @overload
     def __init__(
-        self: "Section[T]",
-        text: Text,
+        self: "Section[T | None]",
+        text: str | Text,
         fields: list[Text] = [],
         accessory: Element[T] = ...,
     ) -> None:
         ...
 
     def __init__(
-        self, text: Text, fields: list[Text] = [], accessory: Element[T] | None = None
+        self,
+        text: str | Text,
+        fields: list[Text] = [],
+        accessory: Element[T] | None = None,
     ) -> None:
         super().__init__()
-        self.text = text
+        self.text = Mrkdwn(text) if isinstance(text, str) else text
         self.fields = fields
         self.accessory = accessory
 
-    def _parse(self, payload: object) -> T:
-        if self.accessory is None:
-            assert payload is None, f"Unexpected payload: {payload}"
-            return None  # type: ignore
+    # ugh, pyright doesn't handle self annotations the same way mypy does
+    if TYPE_CHECKING:
 
-        return self.accessory._parse(payload)
+        @overload
+        def __new__(cls, text: str | Text, fields: list[Text] = []) -> "Section[None]":
+            ...
+
+        @overload
+        def __new__(
+            cls, text: str | Text, fields: list[Text] = [], accessory: Element[T] = ...
+        ) -> "Section[T | None]":
+            ...
+
+        def __new__(
+            cls, text: Any, fields: Any = [], accessory: Any = None
+        ) -> "Section[T | None]":
+            ...
+
+    def _extract(self, payload: object) -> Parsed[object]:
+        if self.accessory is None:
+            assert payload == {}, f"Unexpected payload: {payload}"
+            return Ok(None)
+
+        p = self.accessory._parse(payload)
+        if p is None:
+            # Bit confusing: only Input blocks can have non-optional elements.
+            # It's totally fine for a Section to not get anything from its
+            # element.
+            return Ok(None)
+        return p
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -577,7 +647,12 @@ class Section(Block[T]):
                 else {}
             ),
             **(
-                {"accessory": self.accessory._to_slack_json()} if self.accessory else {}
+                {
+                    "accessory": {"action_id": self.accessory.__class__.__name__}
+                    | self.accessory._to_slack_json()
+                }
+                if self.accessory
+                else {}
             ),
         }
 
@@ -589,6 +664,7 @@ class Section(Block[T]):
         assert self.accessory is not None
         return self.accessory._on_options(query)
 
+    # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "Section[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
@@ -598,7 +674,11 @@ class Section(Block[T]):
 class Input(Block[T]):
     """
     https://api.slack.com/reference/block-kit/blocks?ref=bk#input
+
+    Input blocks are special: only they can have red error messages.
     """
+
+    _validator: Callable[[object], Ok[T] | str] | None
 
     @overload
     def __init__(self: "Input[T]", label: str, element: Element[T]) -> None:
@@ -612,9 +692,42 @@ class Input(Block[T]):
 
     def __init__(self, label: str, element: Element[T], optional: bool = False) -> None:
         super().__init__()
+        self._validator = None
         self.label = label
         self.element = element
         self.optional = optional
+
+    def validate(self, validator: Callable[[T], Ok[U] | str]) -> "Input[U]":
+        copy = deepcopy(self)
+
+        # mypy will complain that we're using a parameter with a covariant
+        # type, but it's fine here
+        def v(t: T) -> Ok[U] | str:  # type: ignore
+            if self._validator is not None:
+                v = self._validator(t)
+                match v:
+                    case Ok(t):
+                        return validator(t)
+                    case error_msg:
+                        return error_msg
+            return validator(t)
+
+        copy._validator = v  # type: ignore
+        return copy  # type: ignore
+
+    def error_if(self, condition: Callable[[T], bool], error_msg: str) -> "Input[T]":
+        # mypy will complain that we're using a parameter with a covariant
+        # type, but it's fine here
+        def v(t: T) -> Ok[T] | str:  # type: ignore
+            return Ok(t) if not condition(t) else error_msg
+
+        return self.validate(v)
+
+    def error_unless(
+        self, condition: Callable[[T], bool], error_msg: str
+    ) -> "Input[T]":
+        # again, covariance issue is fine here
+        return self.error_if(lambda t: not condition(t), error_msg)  # type: ignore
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -626,18 +739,49 @@ class Input(Block[T]):
             "dispatch_action": self.element._callback is not None,
         }
 
-    def _parse(self, payload: object) -> T:
-        if self.optional and payload is None:
-            return None  # type: ignore
+    def _parse(self, payload: object) -> Parsed[T]:
+        raw = self._extract(payload)
+        if raw is None:
+            return None
+        if isinstance(raw, Errors):
+            return raw
+        processed = self._xform(raw.value)
+        if self._validator is None:
+            return Ok(processed)
+        validated = self._validator(processed)
+        if isinstance(validated, str):
+            assert self._block_id is not None
+            return Errors({self._block_id: validated})
+        return validated
 
-        return self.element._parse(payload)
+    def _extract(self, payload: object) -> Parsed[object]:
+        assert self._block_id is not None
+        local_block_id = self._block_id.split("$")[-1]
+        assert isinstance(payload, dict)
+        if local_block_id not in payload:
+            return Ok(None) if self.optional else None
+
+        action_id = self.element.__class__.__name__
+
+        return self.element._parse(payload[local_block_id][action_id])
 
     def _on_action(self, action_id: str, action: object) -> None:
+        assert action_id == self.element.__class__.__name__
+        assert isinstance(action, dict)
         return self.element._on_action(action)
 
     def _on_options(self, action_id: str, query: str) -> list["Option"]:
         return self.element._on_options(query)
 
+    def error(self, msg: str) -> dict[str, str]:
+        """
+        Helper to tr to make it a little more ergonomic to construct block
+        error messages.
+        """
+        assert self._block_id is not None
+        return {self._block_id: msg}
+
+    # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "Input[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
@@ -688,6 +832,11 @@ class Button(Element[T]):
             **({"value": self.value} if self.value is not None else {}),
         }
 
+    def _extract(self, payload: object) -> Ok[str | None] | None:
+        if self.value is not None:
+            return Ok(self.value)
+        return Ok(None)
+
     def map(self, f: Callable[[T], U]) -> "Button[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
@@ -710,6 +859,7 @@ class DatePicker(Element[T]):
         placeholder: str | None = None,
     ) -> None:
         super().__init__()
+        self._xform = lambda s: datetime.datetime.strptime(s, "%Y-%m-%d").date()
         self.initial_date = initial_date
         self.placeholder = placeholder
 
@@ -723,9 +873,16 @@ class DatePicker(Element[T]):
         ) -> "DatePicker[datetime.date]":
             ...
 
-    def _parse_payload(self, payload: object) -> datetime.date:
-        assert isinstance(payload, str)
-        return datetime.datetime.strptime(payload, "%Y-%m-%d").date()
+    def _extract(self, payload: object) -> Ok[str] | None:
+        if payload is None:
+            return None
+
+        assert isinstance(payload, dict)
+        v = payload["selected_date"]
+        if v is None:
+            return None
+        assert isinstance(v, str)
+        return Ok(v)
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -742,10 +899,7 @@ class DatePicker(Element[T]):
             ),
         }
 
-    @property
-    def _payload_path(self) -> list[str]:
-        return ["selected_date"]
-
+    # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "DatePicker[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
@@ -786,6 +940,13 @@ class PlainTextInput(Element[T]):
             placeholder: str | None = None,
         ) -> "PlainTextInput[str]":
             ...
+
+    def _extract(self, payload: object) -> Ok[str] | None:
+        print(f"PlainTextInput {payload=}")
+        if payload == {}:
+            return None
+        assert isinstance(payload, dict), f"Unexpected payload: {payload=}"
+        return Ok(payload["value"])
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -838,6 +999,7 @@ class NumberInput(Element[T]):
     def __init__(self: "NumberInput[float | int]", *, is_decimal_allowed: bool) -> None:
         super().__init__()
         self.is_decimal_allowed = is_decimal_allowed
+        self._xform = float if is_decimal_allowed else int
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -845,12 +1007,13 @@ class NumberInput(Element[T]):
             "is_decimal_allowed": self.is_decimal_allowed,
         }
 
-    def _parse_payload(self, payload: object) -> float | int:
-        assert isinstance(payload, str)
-        if self.is_decimal_allowed:
-            return float(payload)
-        else:
-            return int(payload)
+    def _extract(self, payload: object) -> Ok[str] | None:
+        if payload is None:
+            return None
+        assert isinstance(payload, dict), f"Unexpected payload: {payload=}"
+        v = payload.get("value")
+        assert isinstance(v, str)
+        return Ok(v)
 
     @property
     def _payload_path(self) -> list[str]:
@@ -924,13 +1087,14 @@ class Select(Element[T]):
             ),
         }
 
-    def _parse_payload(self, payload: object) -> str:
-        assert isinstance(payload, str)
-        return payload
+    def _extract(self, payload: object) -> Ok[str] | None:
+        if payload is None:
+            return None
 
-    @property
-    def _payload_path(self) -> list[str]:
-        return ["selected_option", "value"]
+        assert isinstance(payload, dict)
+        v = payload["selected_option"]["value"]
+        assert isinstance(v, str)
+        return Ok(v)
 
     def _on_options(self, query: str) -> list["Option"]:
         assert callable(self.options)

@@ -14,6 +14,7 @@ from slack_sdk import WebClient
 from .modals import (
     Modal,
     View,
+    Block,
     Builder,
     Input,
     Select,
@@ -30,7 +31,6 @@ from .modals import (
     Button,
     DatePicker,
     NumberInput,
-    sequence,
     _modals,
 )
 
@@ -63,11 +63,6 @@ class ExampleModal(Modal):
             dob = Input("Date of birth", DatePicker().callback(self.on_date_picked))
 
             fav_number = Input("Favorite number", NumberInput(is_decimal_allowed=False))
-
-            fav_things = sequence(
-                ("first", Input("Favorite thing 1", PlainTextInput())),
-                ("second", Input("Favorite thing 2", PlainTextInput())),
-            )
 
             fav_ice_cream = Input(
                 "Favorite ice cream",
@@ -125,14 +120,6 @@ class ExampleModal(Modal):
             if and_one_more["thing"] != "open sesame":
                 errors.append(Form.extra["and_one_more"]["thing"].error("Guess again"))
 
-            if form.fav_things[0] == form.fav_things[1]:
-                errors.extend(
-                    [
-                        Form.fav_things[0].error("Can't be the same"),
-                        Form.fav_things[1].error("Can't be the same"),
-                    ]
-                )
-
             print(f"{errors=}")
             if errors:
                 return Errors(*errors)
@@ -178,13 +165,23 @@ class NiceToMeetYouModal(Modal):
 
     def render(self) -> View:
         class Form(Builder):
-            msg = Section(PlainText(f"Nice to meet you {self.name}!"))
+            sound_good = (
+                Input("Sound good?", PlainTextInput().callback(self.on_enter_pressed))
+                .error_unless(lambda msg: len(msg) >= 5, "Gotta be at least 5 chars")
+                .error_if(lambda msg: len(msg) > 10, "Too long")
+            )
+            dob = Input("Date of birth", DatePicker())
+            button = Section(
+                "Click me", accessory=Button("Click", value="ok").callback(print)
+            )
 
-        return View(
-            title="Nice to meet you!",
-            blocks=Form,
-            on_submit=("Ok", lambda _: print("All done!")),
-        )
+        def on_submit(form: Form) -> None:
+            print(f"{form.sound_good=} {form.dob=} {form.button=}")
+
+        return View(title="Nice to meet you!", blocks=Form, on_submit=("Ok", on_submit))
+
+    def on_enter_pressed(self, msg_so_far: str) -> None:
+        print(f"{msg_so_far=}")
 
 
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
@@ -194,22 +191,17 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> None:
     context.ack()
 
-    m = ExampleModal()
+    # modal = NiceToMeetYouModal(name="Alan")
+    modal = ExampleModal()
 
-    j = m._to_slack_view_json()
-    # print(json.dumps(j, indent=2))
-
-    client.views_open(
-        trigger_id=body["trigger_id"],
-        view=j,
-    )
+    client.views_open(trigger_id=body["trigger_id"], view=modal._to_slack_view_json())
 
 
 @app.view("__melax__")
 def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     context.ack()
 
-    # print(json.dumps(body, indent=2))
+    print(json.dumps(body, indent=2))
 
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
@@ -218,11 +210,23 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     # *re*-render the modal, which had better produce the same view as
     # whatever thing on the user's screen led to this callback
     view = modal.render()
+    blocks = view.blocks
+    if isinstance(blocks, Block):
+        if blocks._block_id is None:
+            blocks._block_id = body["view"]["blocks"][0]["block_id"]
+
     # Parse whatever the user filled in
     result = view.blocks._parse(body["view"]["state"]["values"])
+    assert result is not None
+    if isinstance(result, Errors):
+        print("Got errors!", result)
+        context.ack(response_action="errors", errors=result.errors)
+        return
+
     # Run the modal's on_submit handler, which returns whatever
     # we should do next.
-    next_step = view.on_submit[1](result)
+    print(f"Got result: {result=}")
+    next_step = view.on_submit[1](result.value)
 
     match next_step:
         case None:
@@ -230,6 +234,7 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
         case Push(next_modal):
             context.ack(response_action="push", view=next_modal._to_slack_view_json())
         case Errors(errors):
+            print("Gonna send errors!", errors)
             context.ack(response_action="errors", errors=errors)
         case next_modal:
             context.ack(response_action="update", view=next_modal._to_slack_view_json())
