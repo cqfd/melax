@@ -1,7 +1,7 @@
-from copy import deepcopy
 import datetime
 import json
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -57,6 +57,11 @@ class Mappable(ABC, Generic[T]):
 
 
 class DescriptorHack(Generic[T]):
+    """
+    Tell mypy how to interpret class variables inside of Builder subclasses.
+    A class variable of type DescriptorHack[T] will turn into a regular T on
+    instances of the Builder subclass.
+    """
     if TYPE_CHECKING:
 
         @overload
