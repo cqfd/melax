@@ -22,7 +22,6 @@ from .modals import (
     Section,
     PlainText,
     nested,
-    when,
     OnSubmit,
     Errors,
     Push,
@@ -62,7 +61,9 @@ class ExampleModal(Modal):
 
             dob = Input("Date of birth", DatePicker().on_picked(self.on_date_picked))
 
-            fav_number = Input("Favorite number", NumberInput(is_decimal_allowed=False)).error_if(lambda x: x == 7, "7 is unlucky")
+            fav_number = Input(
+                "Favorite number", NumberInput(is_decimal_allowed=False)
+            ).error_if(lambda x: x == 7, "7 is unlucky")
 
             fav_ice_cream = Input(
                 "Favorite ice cream",
@@ -82,10 +83,12 @@ class ExampleModal(Modal):
 
             _divider = Divider().map(lambda _: 123)
 
-            wow = when(
-                self.click_count > 2,
-                Section(PlainText(f"Click count: {self.click_count}")),
+            wow = (
+                Section(PlainText(f"Click count: {self.click_count}"))
+                if self.click_count > 2
+                else None
             )
+            huh = Divider().map(lambda _: "huh") if self.click_count > 3 else None
 
             # nesting is one escape valve from static types: you can do
             # whatever dynamic things you want when determing what keys to

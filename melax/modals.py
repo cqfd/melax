@@ -435,23 +435,6 @@ def sequence(*bs: Any) -> Any:
     return NestedBlocks(blocks=dict(bs)).map(lambda x: tuple(x.values()))
 
 
-@overload
-def when(condition: Literal[True], b: Blocks[T]) -> Blocks[T]:
-    ...
-
-
-@overload
-def when(condition: bool, b: Blocks[T]) -> Blocks[T | None]:
-    ...
-
-
-def when(condition: bool, b: Blocks[T]) -> Blocks[T | None]:
-    if condition:
-        return b
-    else:
-        return nested().map(lambda _: None)
-
-
 OnSubmit = Union[
     "Modal",  # continue being a (possibly different) modal
     "Errors",  # validation errors
