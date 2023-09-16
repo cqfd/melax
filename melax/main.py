@@ -57,12 +57,12 @@ class ExampleModal(Modal):
         class Form(Builder):
             name = Input(
                 "Name" + "!" * self.click_count,
-                PlainTextInput().callback(self.on_name_changed),
+                PlainTextInput().on_enter_pressed(self.on_name_changed),
             )
 
-            dob = Input("Date of birth", DatePicker().callback(self.on_date_picked))
+            dob = Input("Date of birth", DatePicker().on_picked(self.on_date_picked))
 
-            fav_number = Input("Favorite number", NumberInput(is_decimal_allowed=False))
+            fav_number = Input("Favorite number", NumberInput(is_decimal_allowed=False)).error_if(lambda x: x == 7, "7 is unlucky")
 
             fav_ice_cream = Input(
                 "Favorite ice cream",
@@ -70,14 +70,14 @@ class ExampleModal(Modal):
                     options=self.fav_ice_cream_options,
                 )
                 .map(lambda x: IceCream(x))
-                .callback(self.on_ice_cream_picked),
-            )
+                .on_selected(self.on_ice_cream_picked),
+            ).error_if(lambda flavor: flavor == IceCream.VANILLA, "Ew, vanilla")
 
             clickable = Section(
                 PlainText("I'm hopefully clickable"),
                 accessory=Button("Click me!", value="42")
                 .map(lambda x: -int(x))
-                .callback(self.on_click),
+                .on_pressed(self.on_click),
             )
 
             _divider = Divider().map(lambda _: 123)
@@ -93,7 +93,11 @@ class ExampleModal(Modal):
             # of `form.extra`.
             extra = nested(
                 something_else=Input("Something else", PlainTextInput()),
-                and_one_more=nested(thing=Input("Thing", PlainTextInput())),
+                and_one_more=nested(
+                    thing=Input("Password", PlainTextInput()).error_unless(
+                        lambda pw: pw == "open sesame", "Wrong!"
+                    ),
+                ),
             )
 
         # Here the magic is that mypy knows everything about `form`!
@@ -102,31 +106,6 @@ class ExampleModal(Modal):
         # around doing this with typing.Protocols, but this is a bit simpler.
         def on_submit(form: Form) -> OnSubmit:
             print(f"form={vars(form)}")
-
-            # Experimenting with ways to more-or-less ergonomically express errors.
-            # This is made a little tricky because these modals support "nested"
-            # blocks, which means it's slightly trickier to understand what their
-            # block_ids are.
-            errors = []
-
-            if form.fav_number == 7:
-                errors.append(Form.fav_number.error("7 is a bad number"))
-
-            if form.fav_ice_cream is IceCream.VANILLA:
-                errors.append(Form.fav_ice_cream.error("Ew, vanilla"))
-
-            and_one_more = form.extra["and_one_more"]
-            assert isinstance(and_one_more, dict)
-            if and_one_more["thing"] != "open sesame":
-                errors.append(Form.extra["and_one_more"]["thing"].error("Guess again"))
-
-            print(f"{errors=}")
-            if errors:
-                return Errors(*errors)
-
-            # reveal_type(form.name) -> str, etc
-            print(f"{form.name=} {form.dob=} {form.fav_number=} {self.click_count=}")
-
             # Signal what we want to do next via the return value.
             return Push(NiceToMeetYouModal(name=form.name))
 
@@ -166,13 +145,16 @@ class NiceToMeetYouModal(Modal):
     def render(self) -> View:
         class Form(Builder):
             sound_good = (
-                Input("Sound good?", PlainTextInput().callback(self.on_enter_pressed))
+                Input(
+                    "Sound good?",
+                    PlainTextInput().on_character_entered(self.on_character_entered),
+                )
                 .error_unless(lambda msg: len(msg) >= 5, "Gotta be at least 5 chars")
                 .error_if(lambda msg: len(msg) > 10, "Too long")
             )
-            dob = Input("Date of birth", DatePicker())
+            dob = Section("Date of birth", accessory=DatePicker())
             button = Section(
-                "Click me", accessory=Button("Click", value="ok").callback(print)
+                "Click me", accessory=Button("Click", value="ok").on_pressed(print)
             )
 
         def on_submit(form: Form) -> None:
@@ -181,7 +163,10 @@ class NiceToMeetYouModal(Modal):
         return View(title="Nice to meet you!", blocks=Form, on_submit=("Ok", on_submit))
 
     def on_enter_pressed(self, msg_so_far: str) -> None:
-        print(f"{msg_so_far=}")
+        print(f"on_enter_pressed: {msg_so_far=}")
+
+    def on_character_entered(self, msg_so_far: str) -> None:
+        print(f"on_character_entered: {msg_so_far=}")
 
 
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))

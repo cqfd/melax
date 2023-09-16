@@ -187,11 +187,11 @@ class Element(Mappable[T]):
     https://api.slack.com/reference/block-kit/block-elements
     """
 
-    _callback: Callable[[T], None] | None
+    _cb: Callable[[T], None] | None
 
     def __init__(self) -> None:
         super().__init__()
-        self._callback = None
+        self._cb = None
 
     def _parse(self, payload: object) -> Ok[T] | None:
         raw = self._extract(payload)
@@ -213,22 +213,22 @@ class Element(Mappable[T]):
     def _on_action(self, action: object) -> None:
         p = self._parse(action)
         assert p is not None, f"Failed to parse: {action=}"
-        if self._callback is not None:
-            self._callback(p.value)
+        if self._cb is not None:
+            self._cb(p.value)
 
     # As with map above, subclasses should implement callback by calling
     # super(), but they should provide a more accurate return type.
     @abstractmethod
-    def callback(self, cb: Callable[[T], None]) -> "Element[T]":
+    def _callback(self, cb: Callable[[T], None]) -> "Element[T]":
         copy = deepcopy(self)
 
         # mypy complains about covariance, but it's ok
-        def _callback(t: T) -> None:  # type: ignore
-            if self._callback is not None:
-                self._callback(t)
+        def _cb(t: T) -> None:  # type: ignore
+            if self._cb is not None:
+                self._cb(t)
             cb(t)
 
-        copy._callback = _callback
+        copy._cb = _cb
         return copy
 
 
@@ -629,7 +629,15 @@ class Section(Block[T]):
             assert payload == {}, f"Unexpected payload: {payload}"
             return Ok(None)
 
-        p = self.accessory._parse(payload)
+        assert self._block_id is not None
+        local_block_id = self._block_id.split("$")[-1]
+        assert isinstance(payload, dict)
+        if local_block_id not in payload:
+            return Ok(None)
+
+        action_id = self.accessory.__class__.__name__
+
+        p = self.accessory._parse(payload[local_block_id][action_id])
         if p is None:
             # Bit confusing: only Input blocks can have non-optional elements.
             # It's totally fine for a Section to not get anything from its
@@ -736,7 +744,7 @@ class Input(Block[T]):
             "element": self.element._to_slack_json()
             | {"action_id": self.element.__class__.__name__},
             "optional": self.optional,
-            "dispatch_action": self.element._callback is not None,
+            "dispatch_action": self.element._cb is not None,
         }
 
     def _parse(self, payload: object) -> Parsed[T]:
@@ -818,10 +826,6 @@ class Button(Element[T]):
             assert value != "", "Slack doesn't like empty strings for button values"
         self.value = value
 
-    @property
-    def _payload_path(self) -> list[str]:
-        return ["value"]
-
     def _parse_payload(self, payload: object) -> str | None:
         return self.value
 
@@ -842,8 +846,11 @@ class Button(Element[T]):
         assert isinstance(u, self.__class__)
         return u
 
-    def callback(self, cb: Callable[[T], None]) -> "Button[T]":
-        u = super().callback(cb)
+    def on_pressed(self, cb: Callable[[T], None]) -> "Button[T]":
+        return self._callback(cb)
+
+    def _callback(self, cb: Callable[[T], None]) -> "Button[T]":
+        u = super()._callback(cb)
         assert isinstance(u, self.__class__)
         return u
 
@@ -878,6 +885,7 @@ class DatePicker(Element[T]):
             return None
 
         assert isinstance(payload, dict)
+        print(f"DatePicker {payload=}")
         v = payload["selected_date"]
         if v is None:
             return None
@@ -905,8 +913,11 @@ class DatePicker(Element[T]):
         assert isinstance(u, self.__class__)
         return u
 
-    def callback(self, cb: Callable[[T], None]) -> "DatePicker[T]":
-        u = super().callback(cb)
+    def on_picked(self, cb: Callable[[T], None]) -> "DatePicker[T]":
+        return self._callback(cb)
+
+    def _callback(self, cb: Callable[[T], None]) -> "DatePicker[T]":
+        u = super()._callback(cb)
         assert isinstance(u, self.__class__)
         return u
 
@@ -915,6 +926,8 @@ class PlainTextInput(Element[T]):
     """
     https://api.slack.com/reference/block-kit/block-elements#input
     """
+
+    trigger_actions_on: str | None
 
     def __init__(
         self: "PlainTextInput[str]",
@@ -928,6 +941,7 @@ class PlainTextInput(Element[T]):
         self.multiline = multiline
         self.focus_on_load = focus_on_load
         self.placeholder = placeholder
+        self.trigger_actions_on = None
 
     # ugh, pyright doesn't handle self annotations the same way mypy does
     if TYPE_CHECKING:
@@ -958,23 +972,50 @@ class PlainTextInput(Element[T]):
                 if self.placeholder is not None
                 else {}
             ),
+            **(
+                {
+                    "dispatch_action_config": {
+                        "trigger_actions_on": [self.trigger_actions_on]
+                    }
+                }
+                if self.trigger_actions_on is not None
+                else {}
+            ),
         }
 
     def _parse_payload(self, payload: object) -> str:
         assert isinstance(payload, str)
         return payload
 
-    @property
-    def _payload_path(self) -> list[str]:
-        return ["value"]
-
     def map(self, f: Callable[[T], U]) -> "PlainTextInput[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
         return u
 
-    def callback(self, cb: Callable[[T], None]) -> "PlainTextInput[T]":
-        u = super().callback(cb)
+    def on_enter_pressed(self, cb: Callable[[T], None]) -> "PlainTextInput[T]":
+        """
+        https://api.slack.com/reference/block-kit/composition-objects#dispatch_action_config
+        """
+        assert (
+            self.trigger_actions_on != "on_character_entered"
+        ), f"You can only register one type of action callback for a PlainTextInput"
+        copy = self._callback(cb)
+        copy.trigger_actions_on = "on_enter_pressed"
+        return copy
+
+    def on_character_entered(self, cb: Callable[[T], None]) -> "PlainTextInput[T]":
+        """
+        https://api.slack.com/reference/block-kit/composition-objects#dispatch_action_config
+        """
+        assert (
+            self.trigger_actions_on != "on_enter_pressed"
+        ), f"You can only register one type of action callback for a PlainTextInput"
+        copy = self._callback(cb)
+        copy.trigger_actions_on = "on_character_entered"
+        return copy
+
+    def _callback(self, cb: Callable[[T], None]) -> "PlainTextInput[T]":
+        u = super()._callback(cb)
         assert isinstance(u, self.__class__)
         return u
 
@@ -1015,17 +1056,13 @@ class NumberInput(Element[T]):
         assert isinstance(v, str)
         return Ok(v)
 
-    @property
-    def _payload_path(self) -> list[str]:
-        return ["value"]
-
     def map(self, f: Callable[[T], U]) -> "NumberInput[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
         return u
 
-    def callback(self, cb: Callable[[T], None]) -> "NumberInput[T]":
-        u = super().callback(cb)
+    def _callback(self, cb: Callable[[T], None]) -> "NumberInput[T]":
+        u = super()._callback(cb)
         assert isinstance(u, self.__class__)
         return u
 
@@ -1105,7 +1142,10 @@ class Select(Element[T]):
         assert isinstance(u, self.__class__)
         return u
 
-    def callback(self, cb: Callable[[T], None]) -> "Select[T]":
-        u = super().callback(cb)
+    def on_selected(self, cb: Callable[[T], None]) -> "Select[T]":
+        return self._callback(cb)
+
+    def _callback(self, cb: Callable[[T], None]) -> "Select[T]":
+        u = super()._callback(cb)
         assert isinstance(u, self.__class__)
         return u
