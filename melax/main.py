@@ -12,6 +12,7 @@ from slack_bolt.context import BoltContext
 from slack_sdk import WebClient
 
 from .modals import (
+    Actions,
     Modal,
     View,
     Block,
@@ -104,6 +105,12 @@ class ExampleModal(Modal):
                 ),
             )
 
+            yay_or_nay = Actions(
+                yay=Button("Yay", value="yay", style="primary").on_pressed(self.yay),
+                nay=Button("Nay", value="nay", style="danger").on_pressed(self.nay),
+                dob=DatePicker(),
+            )
+
         # Here the magic is that mypy knows everything about `form`!
         # Bit weird-looking that on_submit is nested inside the render method,
         # but that allows us to refer to the `Form` type. There are ways to get
@@ -122,6 +129,12 @@ class ExampleModal(Modal):
             blocks=Form,
             on_submit=("Click me!", on_submit),
         )
+
+    def yay(self, value: str) -> None:
+        print(f"Yay! {value=}")
+
+    def nay(self, value: str) -> None:
+        print(f"Nay! {value=}")
 
     def on_name_changed(self, name: str) -> None:
         print(f"Name changed: {name=}")
@@ -221,7 +234,6 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     # Run the modal's on_submit handler, which returns whatever
     # we should do next.
     next_step = view.on_submit[1](result.value)
-
     match next_step:
         case None:
             context.ack(response_action="clear")

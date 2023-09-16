@@ -62,6 +62,7 @@ class DescriptorHack(Generic[T]):
     A class variable of type DescriptorHack[T] will turn into a regular T on
     instances of the Builder subclass.
     """
+
     if TYPE_CHECKING:
 
         @overload
@@ -158,6 +159,10 @@ class Block(Blocks[T]):
     def _to_slack_json(self) -> Mapping[str, JSON]:
         ...
 
+    @abstractmethod
+    def _extract(self, payload: object) -> Ok[object] | None:
+        ...
+
     def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
         return self._on_action(action_id, action)
 
@@ -234,10 +239,12 @@ class Element(Mappable[T]):
     @abstractmethod
     def _callback(self, cb: Callable[[T], None]) -> "Element[T]":
         copy = deepcopy(self)
-        def _cb(t: T) -> None: # type: ignore
+
+        def _cb(t: T) -> None:  # type: ignore
             if self._cb is not None:
                 self._cb(t)
             cb(t)
+
         copy._cb = _cb
         return copy
 
@@ -251,7 +258,7 @@ class Element(Mappable[T]):
         u._xform = lambda x: f(u._inner._xform(x))  # type: ignore
         # start afresh with no callback
         u._cb = None
-        return u # type: ignore
+        return u  # type: ignore
 
 
 class Builder:
@@ -403,6 +410,7 @@ class NestedBlocks(Blocks[T]):
         assert isinstance(u, self.__class__)
         return u
 
+
 # Combinators
 
 
@@ -550,6 +558,53 @@ class PlainText:
 Text = Union[Mrkdwn, PlainText]
 
 
+class Actions(Block[T]):
+    def __init__(self: "Actions[dict[str, Any]]", **elements: Element[Any]) -> None:
+        super().__init__()
+        self.elements = elements
+
+    if TYPE_CHECKING:
+
+        def __new__(cls, **elements: Element[Any]) -> "Actions[dict[str, Any]]":
+            ...
+
+    def _to_slack_json(self) -> Mapping[str, JSON]:
+        return {
+            "type": "actions",
+            "elements": [
+                {"action_id": k} | e._to_slack_json() for k, e in self.elements.items()
+            ],
+        }
+
+    def _extract(self, payload: object) -> Ok[object] | None:
+        assert isinstance(payload, dict)
+        assert self._block_id is not None
+        block_id = self._block_id.split("$")[-1]
+
+        results: dict[str, Any] = {}
+        for k, e in self.elements.items():
+            p = e._parse(payload[block_id].get(k))
+            match p:
+                case None:
+                    results[k] = None
+                case Ok(v):
+                    results[k] = v
+
+        return Ok(results)
+
+    def _on_action(self, action_id: str, action: object) -> None:
+        self.elements[action_id]._on_action(action)
+
+    def _on_options(self, action_id: str, query: str) -> list["Option"]:
+        return self.elements[action_id]._on_options(query)
+
+    # Type-specific boilerplate
+    def map(self, f: Callable[[T], U]) -> "Actions[U]":
+        u = super().map(f)
+        assert isinstance(u, self.__class__)
+        return u
+
+
 class Divider(Block[T]):
     def __init__(self: "Divider[None]") -> None:
         super().__init__()
@@ -560,7 +615,7 @@ class Divider(Block[T]):
         def __new__(cls) -> "Divider[None]":
             ...
 
-    def _extract(self, payload: object) -> Parsed[None]:
+    def _extract(self, payload: object) -> Ok[None]:
         return Ok(None)
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
@@ -628,7 +683,7 @@ class Section(Block[T]):
         ) -> "Section[T | None]":
             ...
 
-    def _extract(self, payload: object) -> Parsed[object]:
+    def _extract(self, payload: object) -> Ok[object] | None:
         if self.accessory is None:
             assert payload == {}, f"Unexpected payload: {payload}"
             return Ok(None)
@@ -766,7 +821,7 @@ class Input(Block[T]):
             return Errors({self._block_id: validated})
         return validated
 
-    def _extract(self, payload: object) -> Parsed[object]:
+    def _extract(self, payload: object) -> Ok[object] | None:
         assert self._block_id is not None
         local_block_id = self._block_id.split("$")[-1]
         assert isinstance(payload, dict)
@@ -811,11 +866,17 @@ class Button(Element[T]):
         text: str,
         *,
         value: str,
+        style: Literal["primary", "danger"] | None = None,
     ) -> None:
         ...
 
     @overload
-    def __init__(self: "Button[None]", text: str) -> None:
+    def __init__(
+        self: "Button[None]",
+        text: str,
+        *,
+        style: Literal["primary", "danger"] | None = None,
+    ) -> None:
         ...
 
     def __init__(
@@ -823,12 +884,14 @@ class Button(Element[T]):
         text: str,
         *,
         value: str | None = None,
+        style: Literal["primary", "danger"] | None = None,
     ) -> None:
         super().__init__()
         self.text = text
         if value is not None:
             assert value != "", "Slack doesn't like empty strings for button values"
         self.value = value
+        self.style = style
 
     def _parse_payload(self, payload: object) -> str | None:
         return self.value
@@ -838,6 +901,7 @@ class Button(Element[T]):
             "type": "button",
             "text": PlainText(self.text)._to_slack_json(),
             **({"value": self.value} if self.value is not None else {}),
+            **({"style": self.style} if self.style is not None else {}),
         }
 
     def _extract(self, payload: object) -> Ok[str | None] | None:
@@ -889,7 +953,6 @@ class DatePicker(Element[T]):
             return None
 
         assert isinstance(payload, dict)
-        print(f"DatePicker {payload=}")
         v = payload["selected_date"]
         if v is None:
             return None
