@@ -2,7 +2,62 @@ import datetime
 from unittest import mock
 from unittest.mock import Mock
 
-from melax.modals import Actions, Button, Errors, Input, NumberInput, Ok, DatePicker
+from melax.modals import (
+    Actions,
+    Builder,
+    Button,
+    DatePicker,
+    Errors,
+    Input,
+    NumberInput,
+    Ok,
+    Section,
+)
+
+
+def test_sections() -> None:
+    class Form(Builder):
+        s = Section("Hello!")
+
+    p = Form._parse({})
+    assert isinstance(p, Ok)
+    assert isinstance(p.value, Form)
+    assert p.value.s is None
+
+
+    class Form2(Builder):
+        s = Section("Hello", accessory=DatePicker())
+
+    p2 = Form2._parse({})
+    # Section accessory elements are always optional
+    assert isinstance(p2, Ok)
+    assert isinstance(p2.value, Form2)
+    assert p2.value.s is None
+
+    p3 = Form2._parse({
+        "s": {
+          "DatePicker": {
+            "type": "datepicker",
+            "selected_date": None
+          }
+        }
+      })
+
+    assert isinstance(p3, Ok)
+    assert isinstance(p3.value, Form2)
+
+    p4 = Form2._parse({
+        "s": {
+          "DatePicker": {
+            "type": "datepicker",
+            "selected_date": "2023-09-02"
+          }
+        }
+    })
+    assert isinstance(p4, Ok)
+    assert isinstance(p4.value, Form2)
+    assert p4.value.s == datetime.date.fromisoformat("2023-09-02")
+
 
 
 def test_button_callbacks() -> None:
