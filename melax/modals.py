@@ -764,7 +764,7 @@ class Input(Block[T]):
         self.element = element
         self.optional = optional
 
-    def validate(self, validator: Callable[[T], Ok[U] | str]) -> "Input[U]":
+    def map_or_error_msg(self, validator: Callable[[T], Ok[U] | str]) -> "Input[U]":
         copy = deepcopy(self)
 
         # mypy will complain that we're using a parameter with a covariant
@@ -788,7 +788,7 @@ class Input(Block[T]):
         def v(t: T) -> Ok[T] | str:  # type: ignore
             return Ok(t) if not condition(t) else error_msg
 
-        return self.validate(v)
+        return self.map_or_error_msg(v)
 
     def error_unless(
         self, condition: Callable[[T], bool], error_msg: str
