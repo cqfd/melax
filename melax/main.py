@@ -77,8 +77,9 @@ class ExampleModal(Modal):
             clickable = Section(
                 PlainText("I'm hopefully clickable"),
                 accessory=Button("Click me!", value="42")
+                .on_pressed(self.on_click_str)
                 .map(lambda x: -int(x))
-                .on_pressed(self.on_click),
+                .on_pressed(self.on_click_int),
             )
 
             _divider = Divider().map(lambda _: 123)
@@ -130,7 +131,14 @@ class ExampleModal(Modal):
         print(f"{query=}")
         return [Option(text=flavor.name, value=flavor.value) for flavor in IceCream]
 
-    def on_click(self, value: int) -> None:
+    def on_click_str(self, value: str) -> None:
+        assert isinstance(value, str)
+        print(f"Clicked {value=}")
+        # the modal will be re-rendered after action callbacks
+        self.click_count += 1
+
+    def on_click_int(self, value: int) -> None:
+        assert isinstance(value, int)
         print(f"Clicked {value=}")
         # the modal will be re-rendered after action callbacks
         self.click_count += 1
@@ -207,13 +215,11 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     result = view.blocks._parse(body["view"]["state"]["values"])
     assert result is not None
     if isinstance(result, Errors):
-        print("Got errors!", result)
         context.ack(response_action="errors", errors=result.errors)
         return
 
     # Run the modal's on_submit handler, which returns whatever
     # we should do next.
-    print(f"Got result: {result=}")
     next_step = view.on_submit[1](result.value)
 
     match next_step:
@@ -222,7 +228,6 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
         case Push(next_modal):
             context.ack(response_action="push", view=next_modal._to_slack_view_json())
         case Errors(errors):
-            print("Gonna send errors!", errors)
             context.ack(response_action="errors", errors=errors)
         case next_modal:
             context.ack(response_action="update", view=next_modal._to_slack_view_json())

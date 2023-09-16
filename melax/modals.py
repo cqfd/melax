@@ -187,10 +187,15 @@ class Element(Mappable[T]):
     https://api.slack.com/reference/block-kit/block-elements
     """
 
+    # Elements can have action callbacks, and interspersing callbacks with maps
+    # is slightly tricky. See below.
+    _inner: "Element[object] | None"
+
     _cb: Callable[[T], None] | None
 
     def __init__(self) -> None:
         super().__init__()
+        self._inner = None
         self._cb = None
 
     def _parse(self, payload: object) -> Ok[T] | None:
@@ -211,6 +216,9 @@ class Element(Mappable[T]):
         raise Exception(f"Can't get options for element of type {self.__class__}")
 
     def _on_action(self, action: object) -> None:
+        if self._inner is not None:
+            self._inner._on_action(action)
+
         p = self._parse(action)
         assert p is not None, f"Failed to parse: {action=}"
         if self._cb is not None:
@@ -221,15 +229,24 @@ class Element(Mappable[T]):
     @abstractmethod
     def _callback(self, cb: Callable[[T], None]) -> "Element[T]":
         copy = deepcopy(self)
-
-        # mypy complains about covariance, but it's ok
-        def _cb(t: T) -> None:  # type: ignore
+        def _cb(t: T) -> None: # type: ignore
             if self._cb is not None:
                 self._cb(t)
             cb(t)
-
         copy._cb = _cb
         return copy
+
+    def map(self, f: Callable[[T], U]) -> "Element[U]":
+        u = deepcopy(self)
+        # Callbacks need to run with the right set of .map() transformations
+        # Each call to .map can change the type that gets passed to subsequent
+        # callbacks, so we keep track of a linked list of Elements, each of
+        # which keeps track of a single .map()'s worth of callbacks.
+        u._inner = self
+        u._xform = lambda x: f(u._inner._xform(x))  # type: ignore
+        # start afresh with no callback
+        u._cb = None
+        return u # type: ignore
 
 
 class Builder:
@@ -377,10 +394,9 @@ class NestedBlocks(Blocks[T]):
 
     # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "NestedBlocks[U]":
-        u = deepcopy(self)
-        u._xform = lambda x: f(self._xform(x))  # type: ignore
-        return u  # type: ignore
-
+        u = super().map(f)
+        assert isinstance(u, self.__class__)
+        return u
 
 # Combinators
 
