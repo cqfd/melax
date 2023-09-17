@@ -10,29 +10,27 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_bolt.context import BoltContext
 from slack_sdk import WebClient
 
-from .modals import (
+from .blocks import (
     Actions,
-    Block,
+    Blocks,
     Builder,
-    Button,
-    DatePicker,
     Divider,
     Errors,
     Input,
-    Modal,
-    NumberInput,
-    Ok,
-    OnSubmit,
-    PlainText,
-    PlainTextInput,
-    Push,
     Section,
-    Select,
-    UsersSelect,
-    View,
-    _modals,
     nested,
 )
+from .elements import (
+    Button,
+    DatePicker,
+    NumberInput,
+    PlainTextInput,
+    Select,
+    UsersSelect,
+)
+from .messages import Message, _messages
+from .modals import Modal, OnSubmit, _modals
+from .types import Ok, PlainText
 
 
 class IceCream(Enum):
@@ -50,7 +48,7 @@ class ExampleModal(Modal):
     click_count: int = 0
     name: str | None = None
 
-    def render(self) -> View:
+    def render(self) -> Modal.View:
         # Declare a collection of blocks, in such a way that the on_submit
         # below can get nice type-safety. (Looks weird to declare a new class
         # inside the render method, but it works.)
@@ -118,10 +116,10 @@ class ExampleModal(Modal):
         def on_submit(form: Form) -> OnSubmit:
             print(f"form={vars(form)}")
             # Signal what we want to do next via the return value.
-            return Push(NiceToMeetYouModal(name=form.name))
+            return Modal.Push(NiceToMeetYouModal(name=form.name))
 
         # Finally, render returns a View that bundles everything together.
-        return View(
+        return Modal.View(
             title="Example" if self.name is None else f"Hello {self.name}!",
             # The blocks specification is the Form *class*; the on_submit
             # handler will receive an instance. Looks weird but actually
@@ -168,7 +166,7 @@ class ExampleModal(Modal):
 class NiceToMeetYouModal(Modal):
     name: str
 
-    def render(self) -> View:
+    def render(self) -> Modal.View:
         class Form(Builder):
             sound_good = (
                 Input(
@@ -186,7 +184,9 @@ class NiceToMeetYouModal(Modal):
         def on_submit(form: Form) -> None:
             print(f"{form.sound_good=} {form.dob=} {form.button=}")
 
-        return View(title="Nice to meet you!", blocks=Form, on_submit=("Ok", on_submit))
+        return Modal.View(
+            title="Nice to meet you!", blocks=Form, on_submit=("Ok", on_submit)
+        )
 
     def on_enter_pressed(self, msg_so_far: str) -> None:
         print(f"on_enter_pressed: {msg_so_far=}")
@@ -196,7 +196,10 @@ class NiceToMeetYouModal(Modal):
 
 
 class TestModal(Modal):
-    def render(self) -> View:
+    name: str
+    age: int
+
+    def render(self) -> Modal.View:
         class Form(Builder):
             foo = Section("Hi!", accessory=DatePicker())
             bar = Input("Bar", DatePicker())
@@ -204,12 +207,43 @@ class TestModal(Modal):
                 "Fav color", Select(options=[Select.Option(text="Blue", value="blue")])
             )
             best_friend = Input("Best friend", UsersSelect().on_selected(print))
+            actions = Actions(
+                button=Button("Click", value="ok").on_pressed(print),
+            )
 
-        return View(
-            title="Test",
-            blocks=Form,
-            on_submit=("Ok", lambda form: print(form.fav_color)),
+            not_actually_optional = Input(
+                "Not actually optional",
+                PlainTextInput(),
+                optional=True,
+            ).map_or_error_msg(
+                lambda x: Ok(x) if x is not None else "Actually this is required lol"
+            )
+
+        def on_submit(form: Form) -> None:
+            self.dm(form.best_friend, CoolnessCheck())
+
+        return Modal.View(title="Test", blocks=Form, on_submit=("Ok", on_submit))
+
+
+class CoolnessCheck(Message):
+    click_count: int = 0
+
+    @property
+    def text(self) -> str:
+        return "Do you think this is cool?"
+
+    def render(self) -> Blocks[Any]:
+        if self.click_count > 0:
+            return Section("Confirmed cool :thumbsup:")
+
+        return Section(
+            "Do you think this is cool?",
+            accessory=Button("Yes", value="yes").on_pressed(self.on_button_pressed),
         )
+
+    def on_button_pressed(self, v: str) -> None:
+        print(f"CoolnessCheck {v=}")
+        self.click_count += 1
 
 
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
@@ -220,7 +254,9 @@ def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> 
     context.ack()
 
     # modal = NiceToMeetYouModal(name="Alan")
-    modal = TestModal()
+    modal = TestModal(name="Alan", age=38)
+
+    print(json.dumps(modal._to_slack_view_json(), indent=2))
 
     client.views_open(trigger_id=body["trigger_id"], view=modal._to_slack_view_json())
 
@@ -235,14 +271,13 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     modal_type = _modals[private_metadata["type"]]
     modal = modal_type.model_validate(private_metadata["value"])
 
+    client = context.client
+    assert client is not None
+    modal._client = client
+
     # *re*-render the modal, which had better produce the same view as
     # whatever thing on the user's screen led to this callback
     view = modal.render()
-    blocks = view.blocks
-    if isinstance(blocks, Block):
-        if blocks._block_id is None:
-            blocks._block_id = body["view"]["blocks"][0]["block_id"]
-
     # Parse whatever the user filled in
     result = view.blocks._parse(body["view"]["state"]["values"])
     assert result is not None
@@ -256,7 +291,7 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     match next_step:
         case None:
             context.ack(response_action="clear")
-        case Push(next_modal):
+        case Modal.Push(next_modal):
             context.ack(response_action="push", view=next_modal._to_slack_view_json())
         case Errors(errors):
             context.ack(response_action="errors", errors=errors)
@@ -275,6 +310,25 @@ def handle_block_actions(
     actions = body["actions"]
     assert len(actions) == 1, f"Weird, got more than one action: {actions}"
     action = actions[0]
+
+    if "message" in body:
+        private_metadata = json.loads(
+            body["message"]["blocks"][-1]["elements"][0]["image_url"]
+        )
+        message_type = _messages[private_metadata["type"]]
+        message = message_type.model_validate(private_metadata["value"])
+        message.render()._on_block_action(
+            action["block_id"], action["action_id"], action
+        )
+
+        client.chat_update(
+            channel=body["channel"]["id"],
+            text=message.text,
+            ts=body["message"]["ts"],
+            blocks=message._to_slack_blocks_json(),  # type: ignore
+        )
+
+        return
 
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]

@@ -2,20 +2,23 @@ import datetime
 from unittest import mock
 from unittest.mock import Mock
 
-from melax.modals import (
+from melax.blocks import (
     Actions,
     Builder,
-    Button,
-    DatePicker,
     Errors,
     Input,
-    NumberInput,
     Ok,
-    PlainTextInput,
     Section,
+)
+from melax.elements import (
+    Button,
+    DatePicker,
+    NumberInput,
+    PlainTextInput,
     Select,
     UsersSelect,
 )
+from melax.types import Option
 
 
 def test_input_blocks() -> None:
@@ -195,8 +198,8 @@ def test_select_elements() -> None:
     assert isinstance(p, Ok)
     assert p.value.fav_ice_cream
 
-    def external_options(query: str) -> list[Select.Option]:
-        opts = [Select.Option._from(o) for o in static_options]
+    def external_options(query: str) -> list[Option]:
+        opts = [Option._from(o) for o in static_options]
         return [o for o in opts if o.text.lower().startswith(query)]
 
     mock = Mock(side_effect=external_options)
