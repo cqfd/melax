@@ -94,9 +94,9 @@ class Errors:
 
 Parsed = Ok[T] | Errors | None
 """
-A Parsed[T] is either an Ok[T] if parsing went well, some Errors if
-parsing poorly, or None if parsing was skipped (e.g. because some part
-of a modal hasn't even been filled in yet).
+A Parsed[T] is either an Ok[T] if parsing went well, some Errors if parsing
+went poorly, or None if parsing was skipped (e.g. because some part of a modal
+hasn't even been filled in yet).
 """
 
 
@@ -108,6 +108,14 @@ class Blocks(Mappable[T], DescriptorHack[T]):
 
     @abstractmethod
     def _extract(self, payload: object) -> Parsed[object]:
+        """
+        Extract the raw "value" of the payload Slack sent us in a
+        webhook. Subclasses can pick whatever return type they find
+        appropriate; it will be up to any _xforms added by calls to .map() to
+        transform this "raw" extraction into a value of type T.
+
+        This feels pretty awkward but I'm not sure how else to do it.
+        """
         ...
 
     def _parse(self, payload: object) -> Parsed[T]:
