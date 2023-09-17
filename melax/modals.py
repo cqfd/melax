@@ -262,7 +262,8 @@ class Element(Mappable[T]):
         # Callbacks need to run with the right set of .map() transformations
         # Each call to .map can change the type that gets passed to subsequent
         # callbacks, so we keep track of a linked list of Elements, each of
-        # which keeps track of a single .map()'s worth of callbacks.
+        # which keeps track of a single .map()'s worth of type-appropriate
+        # callbacks.
         u._inner = self
         u._xform = lambda x: f(u._inner._xform(x))  # type: ignore
         # start afresh with no callback
@@ -341,11 +342,11 @@ class NestedBlocks(Blocks[T]):
             ...
 
     def _to_slack_blocks_json(self) -> Sequence[JSON]:
-        result: list[JSON] = []
-        for block in self.blocks.values():
-            if isinstance(block, Blocks):
-                result.extend(block._to_slack_blocks_json())
-        return result
+        return [
+            block_json
+            for block in self.blocks.values()
+            for block_json in block._to_slack_blocks_json()
+        ]
 
     def _extract(self, payload: object) -> Parsed[object]:
         assert isinstance(payload, dict)
@@ -359,7 +360,7 @@ class NestedBlocks(Blocks[T]):
         errors: dict[str, str] = {}
         for name, block in self.blocks.items():
             if isinstance(block, Block):
-                v = {k: v for k, v in payload.items() if k == name}
+                v = payload.get(name)
             else:
                 v = {
                     k.removeprefix(f"{name}$"): v
@@ -571,7 +572,9 @@ Text = Union[Mrkdwn, PlainText]
 
 
 class Actions(Block[T]):
+
     def __init__(self: "Actions[dict[str, Any]]", **elements: Element[Any]) -> None:
+        assert elements, "Actions blocks must have at least one element"
         super().__init__()
         self.elements = elements
 
@@ -588,14 +591,14 @@ class Actions(Block[T]):
             ],
         }
 
-    def _extract(self, payload: object) -> Ok[object] | None:
-        assert isinstance(payload, dict)
-        assert self._block_id is not None
-        block_id = self._block_id.split("$")[-1]
-
+    def _extract(self, payload: object) -> Ok[object]:
         results: dict[str, Any] = {}
         for k, e in self.elements.items():
-            p = e._parse(payload[block_id].get(k))
+            # Confusing: the elements in an Actions block are always optional,
+            # so we need to give our elements a chance to parse something even
+            # if we received a totally empty payload (None) for this block.
+            # This will happen e.g. if your Actions block has only buttons.
+            p = e._parse(payload.get(k) if isinstance(payload, dict) else None)
             match p:
                 case None:
                     results[k] = None
@@ -696,23 +699,18 @@ class Section(Block[T]):
             ...
 
     def _extract(self, payload: object) -> Ok[object] | None:
-        if self.accessory is None:
-            assert payload == {}, f"Unexpected payload: {payload}"
-            return Ok(None)
-
-        assert self._block_id is not None
-        local_block_id = self._block_id.split("$")[-1]
-        assert isinstance(payload, dict)
-        if local_block_id not in payload:
-            return Ok(None)
-
-        action_id = self.accessory.__class__.__name__
-
-        p = self.accessory._parse(payload[local_block_id][action_id])
-        if p is None:
+        if payload is None:
             # Bit confusing: only Input blocks can have non-optional elements.
             # It's totally fine for a Section to not get anything from its
             # element.
+            return Ok(None)
+
+        assert self.accessory is not None, f"Section without an accessory got payload: {payload=}"
+        assert isinstance(payload, dict)
+
+        action_id = self.accessory.__class__.__name__
+        p = self.accessory._parse(payload[action_id])
+        if p is None:
             return Ok(None)
         return p
 
@@ -838,15 +836,13 @@ class Input(Block[T]):
         return validated
 
     def _extract(self, payload: object) -> Ok[object] | None:
-        assert self._block_id is not None
-        local_block_id = self._block_id.split("$")[-1]
-        assert isinstance(payload, dict)
-        if local_block_id not in payload:
+        if payload is None:
             return Ok(None) if self.optional else None
 
+        assert isinstance(payload, dict)
         action_id = self.element.__class__.__name__
 
-        return self.element._parse(payload[local_block_id][action_id])
+        return self.element._parse(payload[action_id])
 
     def _on_action(self, action_id: str, action: object) -> None:
         assert action_id == self.element.__class__.__name__
@@ -909,9 +905,6 @@ class Button(Element[T]):
         self.value = value
         self.style = style
 
-    def _parse_payload(self, payload: object) -> str | None:
-        return self.value
-
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
             "type": "button",
@@ -920,10 +913,13 @@ class Button(Element[T]):
             **({"style": self.style} if self.style is not None else {}),
         }
 
-    def _extract(self, payload: object) -> Ok[str | None] | None:
-        if self.value is not None:
-            return Ok(self.value)
-        return Ok(None)
+    def _extract(self, payload: object) -> Ok[str | None]:
+        # Confusing: Slack treats buttons differently between submit callbacks
+        # and action callbacks; button action callbacks get a "value" field,
+        # but submit callbacks *never* get button-related payloads. To fit
+        # Buttons into this functor-y framework, I just pretend that they
+        # always have their value.
+        return Ok(self.value)
 
     def map(self, f: Callable[[T], U]) -> "Button[U]":
         u = super().map(f)
@@ -934,9 +930,9 @@ class Button(Element[T]):
         return self._callback(cb)
 
     def _callback(self, cb: Callable[[T], None]) -> "Button[T]":
-        u = super()._callback(cb)
-        assert isinstance(u, self.__class__)
-        return u
+        t = super()._callback(cb)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class DatePicker(Element[T]):
@@ -1000,9 +996,9 @@ class DatePicker(Element[T]):
         return self._callback(cb)
 
     def _callback(self, cb: Callable[[T], None]) -> "DatePicker[T]":
-        u = super()._callback(cb)
-        assert isinstance(u, self.__class__)
-        return u
+        t = super()._callback(cb)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class PlainTextInput(Element[T]):
@@ -1039,10 +1035,9 @@ class PlainTextInput(Element[T]):
             ...
 
     def _extract(self, payload: object) -> Ok[str] | None:
-        print(f"PlainTextInput {payload=}")
-        if payload == {}:
+        if payload is None:
             return None
-        assert isinstance(payload, dict), f"Unexpected payload: {payload=}"
+        assert isinstance(payload, dict), f"Unexpected PlainTextInput payload: {payload=}"
         return Ok(payload["value"])
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
@@ -1065,10 +1060,6 @@ class PlainTextInput(Element[T]):
                 else {}
             ),
         }
-
-    def _parse_payload(self, payload: object) -> str:
-        assert isinstance(payload, str)
-        return payload
 
     def map(self, f: Callable[[T], U]) -> "PlainTextInput[U]":
         u = super().map(f)
@@ -1098,9 +1089,9 @@ class PlainTextInput(Element[T]):
         return copy
 
     def _callback(self, cb: Callable[[T], None]) -> "PlainTextInput[T]":
-        u = super()._callback(cb)
-        assert isinstance(u, self.__class__)
-        return u
+        t = super()._callback(cb)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class NumberInput(Element[T]):
@@ -1145,9 +1136,9 @@ class NumberInput(Element[T]):
         return u
 
     def _callback(self, cb: Callable[[T], None]) -> "NumberInput[T]":
-        u = super()._callback(cb)
-        assert isinstance(u, self.__class__)
-        return u
+        t = super()._callback(cb)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class Select(Element[T]):
@@ -1309,6 +1300,6 @@ class UsersSelect(Element[T]):
         return u
 
     def _callback(self, cb: Callable[[T], None]) -> "UsersSelect[T]":
-        u = super()._callback(cb)
-        assert isinstance(u, self.__class__)
-        return u
+        t = super()._callback(cb)
+        assert isinstance(t, self.__class__)
+        return t
