@@ -126,7 +126,7 @@ class Blocks(Mappable[T], DescriptorHack[T]):
             return raw
 
     @abstractmethod
-    def _to_slack_blocks(self) -> Sequence[JSON]:
+    def _to_slack_blocks_json(self) -> Sequence[JSON]:
         ...
 
     @abstractmethod
@@ -157,7 +157,7 @@ class Block(Blocks[T]):
 
     _block_id: str | None = None
 
-    def _to_slack_blocks(self) -> Sequence[JSON]:
+    def _to_slack_blocks_json(self) -> Sequence[JSON]:
         if self._block_id is None:
             return [self._to_slack_json()]
         else:
@@ -297,8 +297,8 @@ class Builder:
         return Ok(self)
 
     @classmethod
-    def _to_slack_blocks(cls) -> Sequence[JSON]:
-        return cls._dict._to_slack_blocks()
+    def _to_slack_blocks_json(cls) -> Sequence[JSON]:
+        return cls._dict._to_slack_blocks_json()
 
     @classmethod
     def _on_block_action(cls, block_id: str, action_id: str, action: object) -> None:
@@ -340,11 +340,11 @@ class NestedBlocks(Blocks[T]):
         ) -> "NestedBlocks[dict[str, X]]":
             ...
 
-    def _to_slack_blocks(self) -> Sequence[JSON]:
+    def _to_slack_blocks_json(self) -> Sequence[JSON]:
         result: list[JSON] = []
         for block in self.blocks.values():
             if isinstance(block, Blocks):
-                result.extend(block._to_slack_blocks())
+                result.extend(block._to_slack_blocks_json())
         return result
 
     def _extract(self, payload: object) -> Parsed[object]:
@@ -531,18 +531,21 @@ class Modal(ABC, pydantic.BaseModel):
         ...
 
     def __init_subclass__(cls) -> None:
-        _modals[cls.__name__] = cls
+        fully_qualified_class_name = f"{cls.__module__}.{cls.__name__}"
+        assert fully_qualified_class_name not in _modals, f"{fully_qualified_class_name} has already been registered as a modal!"
+        _modals[fully_qualified_class_name] = cls
 
     def _to_slack_view_json(self) -> dict[str, Any]:
         view = self.render()
+        fully_qualified_class_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
         return {
             "type": "modal",
             "title": PlainText(view.title)._to_slack_json(),
-            "blocks": view.blocks._to_slack_blocks(),
+            "blocks": view.blocks._to_slack_blocks_json(),
             "submit": {"type": "plain_text", "text": view.on_submit[0]},
             "callback_id": "__melax__",
             "private_metadata": json.dumps(  # <- needs to be a string
-                {"type": self.__class__.__name__, "value": self.model_dump_json()}
+                {"type": fully_qualified_class_name, "value": self.model_dump_json()}
             ),
         }
 
