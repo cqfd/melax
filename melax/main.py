@@ -4,7 +4,7 @@ import datetime
 import json
 
 from enum import Enum
-from typing import Any
+from typing import Any, Sequence
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -26,7 +26,6 @@ from .modals import (
     OnSubmit,
     Errors,
     Push,
-    Option,
     PlainTextInput,
     Button,
     DatePicker,
@@ -140,9 +139,11 @@ class ExampleModal(Modal):
         print(f"Name changed: {name=}")
         self.name = name
 
-    def fav_ice_cream_options(self, query: str) -> list[Option]:
+    def fav_ice_cream_options(self, query: str) -> Sequence[Select.Option]:
         print(f"{query=}")
-        return [Option(text=flavor.name, value=flavor.value) for flavor in IceCream]
+        return [
+            Select.Option(text=flavor.name, value=flavor.value) for flavor in IceCream
+        ]
 
     def on_click_str(self, value: str) -> None:
         assert isinstance(value, str)
@@ -193,6 +194,22 @@ class NiceToMeetYouModal(Modal):
         print(f"on_character_entered: {msg_so_far=}")
 
 
+class TestModal(Modal):
+    def render(self) -> View:
+        class Form(Builder):
+            foo = Section("Hi!", accessory=DatePicker())
+            bar = Input("Bar", DatePicker())
+            fav_color = Input(
+                "Fav color", Select(options=[Select.Option(text="Blue", value="blue")])
+            )
+
+        return View(
+            title="Test",
+            blocks=Form,
+            on_submit=("Ok", lambda form: print(form.fav_color)),
+        )
+
+
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
@@ -201,7 +218,7 @@ def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> 
     context.ack()
 
     # modal = NiceToMeetYouModal(name="Alan")
-    modal = ExampleModal()
+    modal = TestModal()
 
     client.views_open(trigger_id=body["trigger_id"], view=modal._to_slack_view_json())
 

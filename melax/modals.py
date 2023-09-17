@@ -128,7 +128,7 @@ class Blocks(Mappable[T], DescriptorHack[T]):
     @abstractmethod
     def _on_block_options(
         self, block_id: str, action_id: str, query: str
-    ) -> list["Option"]:
+    ) -> Sequence["Select.Option"]:
         ...
 
     @abstractmethod
@@ -172,11 +172,11 @@ class Block(Blocks[T]):
 
     def _on_block_options(
         self, block_id: str, action_id: str, query: str
-    ) -> list["Option"]:
+    ) -> Sequence["Select.Option"]:
         return self._on_options(action_id, query)
 
     @abstractmethod
-    def _on_options(self, action_id: str, query: str) -> list["Option"]:
+    def _on_options(self, action_id: str, query: str) -> Sequence["Select.Option"]:
         ...
 
     def __set_name__(self, owner: Any, name: str) -> None:
@@ -222,7 +222,7 @@ class Element(Mappable[T]):
     def _to_slack_json(self) -> Mapping[str, JSON]:
         ...
 
-    def _on_options(self, query: str) -> list["Option"]:
+    def _on_options(self, query: str) -> Sequence["Select.Option"]:
         raise Exception(f"Can't get options for element of type {self.__class__}")
 
     def _on_action(self, action: object) -> None:
@@ -298,7 +298,7 @@ class Builder:
     @classmethod
     def _on_block_options(
         cls, block_id: str, action_id: str, query: str
-    ) -> list["Option"]:
+    ) -> Sequence["Select.Option"]:
         return cls._dict._on_block_options(block_id, action_id, query)
 
 
@@ -382,7 +382,7 @@ class NestedBlocks(Blocks[T]):
 
     def _on_block_options(
         self, block_id: str, action_id: str, query: str
-    ) -> list["Option"]:
+    ) -> Sequence["Select.Option"]:
         path = block_id.split("$", 1)
         suffix = "$".join(path[1:])
         return self.blocks[path[0]]._on_block_options(suffix, action_id, query)
@@ -595,7 +595,7 @@ class Actions(Block[T]):
     def _on_action(self, action_id: str, action: object) -> None:
         self.elements[action_id]._on_action(action)
 
-    def _on_options(self, action_id: str, query: str) -> list["Option"]:
+    def _on_options(self, action_id: str, query: str) -> Sequence["Select.Option"]:
         return self.elements[action_id]._on_options(query)
 
     # Type-specific boilerplate
@@ -624,7 +624,7 @@ class Divider(Block[T]):
     def _on_action(self, action_id: str, action: object) -> None:
         raise Exception(f"Dividers can't respond to actions: {action_id=} {action=}")
 
-    def _on_options(self, action_id: str, query: str) -> list["Option"]:
+    def _on_options(self, action_id: str, query: str) -> list["Select.Option"]:
         raise Exception(f"Dividers can't respond to options: {action_id=} {query=}")
 
     # Type-specific boilerplate
@@ -727,7 +727,7 @@ class Section(Block[T]):
         assert self.accessory is not None
         return self.accessory._on_action(action)
 
-    def _on_options(self, action_id: str, query: str) -> list["Option"]:
+    def _on_options(self, action_id: str, query: str) -> Sequence["Select.Option"]:
         assert self.accessory is not None
         return self.accessory._on_options(query)
 
@@ -837,7 +837,7 @@ class Input(Block[T]):
         assert isinstance(action, dict)
         return self.element._on_action(action)
 
-    def _on_options(self, action_id: str, query: str) -> list["Option"]:
+    def _on_options(self, action_id: str, query: str) -> Sequence["Select.Option"]:
         return self.element._on_options(query)
 
     def error(self, msg: str) -> dict[str, str]:
@@ -1134,28 +1134,47 @@ class NumberInput(Element[T]):
         return u
 
 
-@dataclass
-class Option:
-    text: str
-    value: str
-
-    def to_slack_json(self) -> dict[str, Any]:
-        return {"text": PlainText(self.text)._to_slack_json(), "value": self.value}
-
-
 class Select(Element[T]):
     """
     https://api.slack.com/reference/block-kit/block-elements#select
     """
 
+    @dataclass(kw_only=True)
+    class Option:
+        text: str
+        value: str
+
+        def to_slack_json(self) -> dict[str, Any]:
+            return {"text": PlainText(self.text)._to_slack_json(), "value": self.value}
+
+        @staticmethod
+        def _from(x: "str | Select.Option") -> "Select.Option":
+            if not isinstance(x, Select.Option):
+                x = Select.Option(text=x, value=x)
+            return x
+
+    options: Sequence[Option] | Callable[[str], Sequence[Option]]
+
     def __init__(
         self: "Select[str]",
         *,
-        options: list[Option] | Callable[[str], list[Option]],
+        options: Sequence[Option | str] | Callable[[str], Sequence[Option | str]],
         placeholder: str | None = None,
     ) -> None:
+        """
+        Providing a static list of options produces an element of type
+        "static_select". To produce an element of type "external_select", pass
+        a function that takes the current typeahead text as an argument and
+        *returns* a list of options.
+        """
+
         super().__init__()
-        self.options = options
+        if isinstance(options, Sequence):
+            self.options = [self.Option._from(o) for o in options]
+        else:
+            # not sure why this helps out mypy
+            f = options
+            self.options = lambda query: [self.Option._from(o) for o in f(query)]
         self.placeholder = placeholder
 
     # ugh, pyright doesn't handle self annotations the same way mypy does
@@ -1164,7 +1183,7 @@ class Select(Element[T]):
         def __new__(
             cls,
             *,
-            options: list[Option] | Callable[[str], list[Option]],
+            options: Sequence[Option | str] | Callable[[str], Sequence[Option | str]],
             placeholder: str | None = None,
         ) -> "Select[str]":
             ...
@@ -1200,7 +1219,7 @@ class Select(Element[T]):
         assert isinstance(v, str)
         return Ok(v)
 
-    def _on_options(self, query: str) -> list["Option"]:
+    def _on_options(self, query: str) -> Sequence["Option"]:
         assert callable(self.options)
         return self.options(query)
 

@@ -11,7 +11,6 @@ from melax.modals import (
     Input,
     NumberInput,
     Ok,
-    Option,
     PlainTextInput,
     Section,
     Select,
@@ -157,9 +156,9 @@ def test_actions_blocks() -> None:
 
 
 def test_select_elements() -> None:
-    chocolate = Option("Chocolate", "chocolate")
-    vanilla = Option("Vanilla", "vanilla")
-    static_options = [chocolate, vanilla]
+    chocolate = Select.Option(text="Chocolate", value="chocolate")
+    vanilla = Select.Option(text="Vanilla", value="vanilla")
+    static_options = [chocolate, vanilla, "strawberry"]
 
     class Static(Builder):
         fav_ice_cream = Input("Favorite ice cream", Select(options=static_options))
@@ -184,9 +183,10 @@ def test_select_elements() -> None:
     assert isinstance(p, Ok)
     assert p.value.fav_ice_cream
 
-    def external_options(query: str) -> list[Option]:
+    def external_options(query: str) -> list[Select.Option]:
+        opts = [Select.Option._from(o) for o in static_options]
         return [
-            o for o in static_options if o.text.lower().startswith(query)
+            o for o in opts if o.text.lower().startswith(query)
         ]
     mock = Mock(side_effect=external_options)
 
