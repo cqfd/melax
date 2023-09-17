@@ -14,6 +14,7 @@ from melax.modals import (
     PlainTextInput,
     Section,
     Select,
+    UsersSelect,
 )
 
 
@@ -185,9 +186,8 @@ def test_select_elements() -> None:
 
     def external_options(query: str) -> list[Select.Option]:
         opts = [Select.Option._from(o) for o in static_options]
-        return [
-            o for o in opts if o.text.lower().startswith(query)
-        ]
+        return [o for o in opts if o.text.lower().startswith(query)]
+
     mock = Mock(side_effect=external_options)
 
     class Dynamic(Builder):
@@ -196,3 +196,44 @@ def test_select_elements() -> None:
     opts = Dynamic._on_block_options("fav_ice_cream", "Select", "choco")
     mock.assert_called_with("choco")
     assert opts == [chocolate]
+
+
+def test_users_select_elements() -> None:
+    cb = Mock()
+
+    class Form(Builder):
+        manager = Input("Manager", UsersSelect())
+        best_friend = Section("Best friend", accessory=UsersSelect().on_selected(cb))
+
+    p = Form._parse(
+        {
+            "manager": {
+                "UsersSelect": {
+                    "type": "users_select",
+                    "selected_user": "U123",
+                }
+            },
+            "best_friend": {
+                "UsersSelect": {
+                    "type": "users_select",
+                    "selected_user": None,
+                }
+            },
+        }
+    )
+
+    assert isinstance(p, Ok)
+    assert p.value.manager == "U123"
+    assert p.value.best_friend is None
+
+    user_id = "U01RCM23TT2"
+    action = {
+        "type": "users_select",
+        "action_id": "UsersSelect",
+        "block_id": "best_friend",
+        "selected_user": user_id,
+        "action_ts": "1694925631.236937",
+    }
+
+    Form._on_block_action("best_friend", "UsersSelect", action)
+    cb.assert_called_with(user_id)

@@ -256,6 +256,7 @@ class Element(Mappable[T]):
         copy._cb = _cb
         return copy
 
+    @abstractmethod
     def map(self, f: Callable[[T], U]) -> "Element[U]":
         u = deepcopy(self)
         # Callbacks need to run with the right set of .map() transformations
@@ -750,7 +751,7 @@ class Input(Block[T]):
     """
     https://api.slack.com/reference/block-kit/blocks?ref=bk#input
 
-    Input blocks are special: only they can have red error messages.
+    Input blocks are special: only they can produce red error messages.
     """
 
     _validator: Callable[[object], Ok[T] | str] | None
@@ -773,6 +774,11 @@ class Input(Block[T]):
         self.optional = optional
 
     def map_or_error_msg(self, validator: Callable[[T], Ok[U] | str]) -> "Input[U]":
+        """
+        Like .map() but lets you return an error message if you don't like the
+        Input block's parsed value. Potentially handy if you want to "refine"
+        an Input block's type in a fallible way.
+        """
         copy = deepcopy(self)
 
         # mypy will complain that we're using a parameter with a covariant
@@ -814,12 +820,11 @@ class Input(Block[T]):
             "dispatch_action": self.element._cb is not None,
         }
 
+    # Here's where we can finally signal errors.
     def _parse(self, payload: object) -> Parsed[T]:
         raw = self._extract(payload)
         if raw is None:
             return None
-        if isinstance(raw, Errors):
-            return raw
         processed = self._xform(raw.value)
         if self._validator is None:
             return Ok(processed)
@@ -1073,7 +1078,7 @@ class PlainTextInput(Element[T]):
         """
         assert (
             self.trigger_actions_on != "on_character_entered"
-        ), f"You can only register one type of action callback for a PlainTextInput"
+        ), "You can only register one type of action callback for a PlainTextInput"
         copy = self._callback(cb)
         copy.trigger_actions_on = "on_enter_pressed"
         return copy
@@ -1084,7 +1089,7 @@ class PlainTextInput(Element[T]):
         """
         assert (
             self.trigger_actions_on != "on_enter_pressed"
-        ), f"You can only register one type of action callback for a PlainTextInput"
+        ), "You can only register one type of action callback for a PlainTextInput"
         copy = self._callback(cb)
         copy.trigger_actions_on = "on_character_entered"
         return copy
@@ -1240,6 +1245,67 @@ class Select(Element[T]):
         return self._callback(cb)
 
     def _callback(self, cb: Callable[[T], None]) -> "Select[T]":
+        u = super()._callback(cb)
+        assert isinstance(u, self.__class__)
+        return u
+
+
+class UsersSelect(Element[T]):
+    def __init__(
+        self: "UsersSelect[str]",
+        *,
+        initial_user_id: str | None = None,
+        focus_on_load: bool = False,
+        placeholder: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.initial_user_id = initial_user_id
+        self.focus_on_load = focus_on_load
+        self.placeholder = placeholder
+
+    if TYPE_CHECKING:
+
+        def __new__(
+            cls,
+            initial_user_id: str | None = None,
+            focus_on_load: bool = False,
+            placeholder: str | None = None,
+        ) -> "UsersSelect[str]":
+            ...
+
+    def _to_slack_json(self) -> Mapping[str, JSON]:
+        return {
+            "type": "users_select",
+            **(
+                {"initial_user": self.initial_user_id}
+                if self.initial_user_id is not None
+                else {}
+            ),
+            **(
+                {"placeholder": PlainText(self.placeholder)._to_slack_json()}
+                if self.placeholder is not None
+                else {}
+            ),
+        }
+
+    def _extract(self, payload: object) -> Ok[str] | None:
+        print(f"UsersSelect {payload=}")
+        assert isinstance(payload, dict)
+        selected_user = payload.get("selected_user")
+        if selected_user is None:
+            return None
+        assert isinstance(selected_user, str)
+        return Ok(selected_user)
+
+    def on_selected(self, cb: Callable[[T], None]) -> "UsersSelect[T]":
+        return self._callback(cb)
+
+    def map(self, f: Callable[[T], U]) -> "UsersSelect[U]":
+        u = super().map(f)
+        assert isinstance(u, self.__class__)
+        return u
+
+    def _callback(self, cb: Callable[[T], None]) -> "UsersSelect[T]":
         u = super()._callback(cb)
         assert isinstance(u, self.__class__)
         return u

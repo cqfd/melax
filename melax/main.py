@@ -1,8 +1,7 @@
-import os
-import re
 import datetime
 import json
-
+import os
+import re
 from enum import Enum
 from typing import Any, Sequence
 
@@ -13,24 +12,25 @@ from slack_sdk import WebClient
 
 from .modals import (
     Actions,
-    Modal,
-    View,
     Block,
     Builder,
-    Input,
-    Select,
-    Divider,
-    Section,
-    PlainText,
-    nested,
-    OnSubmit,
-    Errors,
-    Push,
-    PlainTextInput,
     Button,
     DatePicker,
+    Divider,
+    Errors,
+    Input,
+    Modal,
     NumberInput,
+    OnSubmit,
+    PlainText,
+    PlainTextInput,
+    Push,
+    Section,
+    Select,
+    UsersSelect,
+    View,
     _modals,
+    nested,
 )
 
 
@@ -202,6 +202,7 @@ class TestModal(Modal):
             fav_color = Input(
                 "Fav color", Select(options=[Select.Option(text="Blue", value="blue")])
             )
+            best_friend = Input("Best friend", UsersSelect().on_selected(print))
 
         return View(
             title="Test",
