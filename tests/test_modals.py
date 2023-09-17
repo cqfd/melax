@@ -155,6 +155,17 @@ def test_actions_blocks() -> None:
     assert isinstance(p, Ok)
     assert p.value.yay_or_nay == {"yay": "yay", "nay": "nay", "dob": None}
 
+    # Hmm, this is maybe a bit weird. The elemnts in an Actions block are
+    # always optional. But Buttons in this framework effectively always have a
+    # value, because Slack *never* sends a submit payload for them--from
+    # Slack's perspective their "value" parameter only exists when they get
+    # clicked. At any rate, to fit into this functor-y framework, I pretend
+    # that Buttons always have their value; that means that this Actions block
+    # needs to successfully parse even a totally empty payload.
+    p2 = Form._parse({})
+    assert isinstance(p2, Ok)
+    assert p2.value.yay_or_nay == {"yay": "yay", "nay": "nay", "dob": None}
+
 
 def test_select_elements() -> None:
     chocolate = Select.Option(text="Chocolate", value="chocolate")

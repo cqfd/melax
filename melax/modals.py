@@ -533,12 +533,16 @@ class Modal(ABC, pydantic.BaseModel):
 
     def __init_subclass__(cls) -> None:
         fully_qualified_class_name = f"{cls.__module__}.{cls.__name__}"
-        assert fully_qualified_class_name not in _modals, f"{fully_qualified_class_name} has already been registered as a modal!"
+        assert (
+            fully_qualified_class_name not in _modals
+        ), f"{fully_qualified_class_name} has already been registered as a modal!"
         _modals[fully_qualified_class_name] = cls
 
     def _to_slack_view_json(self) -> dict[str, Any]:
         view = self.render()
-        fully_qualified_class_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
+        fully_qualified_class_name = (
+            f"{self.__class__.__module__}.{self.__class__.__name__}"
+        )
         return {
             "type": "modal",
             "title": PlainText(view.title)._to_slack_json(),
@@ -546,7 +550,7 @@ class Modal(ABC, pydantic.BaseModel):
             "submit": {"type": "plain_text", "text": view.on_submit[0]},
             "callback_id": "__melax__",
             "private_metadata": json.dumps(  # <- needs to be a string
-                {"type": fully_qualified_class_name, "value": self.model_dump_json()}
+                {"type": fully_qualified_class_name, "value": self.model_dump()}
             ),
         }
 
@@ -572,7 +576,6 @@ Text = Union[Mrkdwn, PlainText]
 
 
 class Actions(Block[T]):
-
     def __init__(self: "Actions[dict[str, Any]]", **elements: Element[Any]) -> None:
         assert elements, "Actions blocks must have at least one element"
         super().__init__()
@@ -705,7 +708,9 @@ class Section(Block[T]):
             # element.
             return Ok(None)
 
-        assert self.accessory is not None, f"Section without an accessory got payload: {payload=}"
+        assert (
+            self.accessory is not None
+        ), f"Section without an accessory got payload: {payload=}"
         assert isinstance(payload, dict)
 
         action_id = self.accessory.__class__.__name__
@@ -763,7 +768,13 @@ class Input(Block[T]):
 
     @overload
     def __init__(
-        self: "Input[T | None]", label: str, element: Element[T], optional: bool = ...
+        self: "Input[T]", label: str, element: Element[T], optional: Literal[False]
+    ) -> None:
+        ...
+
+    @overload
+    def __init__(
+        self: "Input[T | None]", label: str, element: Element[T], optional: bool
     ) -> None:
         ...
 
@@ -773,6 +784,30 @@ class Input(Block[T]):
         self.label = label
         self.element = element
         self.optional = optional
+
+    # urgh, pyright doesn't handle self annotations the same way mypy does
+    if TYPE_CHECKING:
+
+        @overload
+        def __new__(cls, label: str, element: Element[T]) -> "Input[T]":
+            ...
+
+        @overload
+        def __new__(
+            cls, label: str, element: Element[T], optional: Literal[False]
+        ) -> "Input[T]":
+            ...
+
+        @overload
+        def __new__(
+            cls, label: str, element: Element[T], optional: bool
+        ) -> "Input[T | None]":
+            ...
+
+        def __new__(
+            cls, label: str, element: Element[T], optional: bool = False
+        ) -> "Input[T | None]":
+            ...
 
     def map_or_error_msg(self, validator: Callable[[T], Ok[U] | str]) -> "Input[U]":
         """
@@ -1037,7 +1072,9 @@ class PlainTextInput(Element[T]):
     def _extract(self, payload: object) -> Ok[str] | None:
         if payload is None:
             return None
-        assert isinstance(payload, dict), f"Unexpected PlainTextInput payload: {payload=}"
+        assert isinstance(
+            payload, dict
+        ), f"Unexpected PlainTextInput payload: {payload=}"
         return Ok(payload["value"])
 
     def _to_slack_json(self) -> Mapping[str, JSON]:

@@ -21,6 +21,7 @@ from .modals import (
     Input,
     Modal,
     NumberInput,
+    Ok,
     OnSubmit,
     PlainText,
     PlainTextInput,
@@ -232,7 +233,7 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
 
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
-    modal = modal_type.model_validate_json(private_metadata["value"])
+    modal = modal_type.model_validate(private_metadata["value"])
 
     # *re*-render the modal, which had better produce the same view as
     # whatever thing on the user's screen led to this callback
@@ -277,7 +278,7 @@ def handle_block_actions(
 
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
-    modal = modal_type.model_validate_json(private_metadata["value"])
+    modal = modal_type.model_validate(private_metadata["value"])
 
     # *re*-render the modal, which had better produce the same view as
     # whatever thing on the user's screen led to this callback
@@ -304,7 +305,7 @@ def handle_options(
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
     original_state = private_metadata["value"]
-    modal = modal_type.model_validate_json(private_metadata["value"])
+    modal = modal_type.model_validate(private_metadata["value"])
 
     view = modal.render()
     options = view.blocks._on_block_options(body["block_id"], body["action_id"], query)
