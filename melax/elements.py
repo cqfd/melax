@@ -146,7 +146,7 @@ class Button(Element[T]):
         # always have their value.
         return Ok(self.value)
 
-    def is_is_interactive(self) -> bool:
+    def is_interactive(self) -> bool:
         return True
 
     def map(self, f: Callable[[T], U]) -> "Button[U]":
