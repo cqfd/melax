@@ -676,6 +676,21 @@ class Input(Block[T]):
         copy._validator = v  # type: ignore
         return copy  # type: ignore
 
+    def validate(self, validator: Callable[[T], U]) -> "Input[U]":
+        """
+        Like map/map_or_error_msg but you can signal erros by raising
+        ValueErrors.
+        """
+        # mypy complains about covariance but it's ok
+        def v(t: T) -> Ok[U] | str: # type: ignore
+            try:
+                u = validator(t)
+            except ValueError as e:
+                return str(e)
+            else:
+                return Ok(u)
+        return self.map_or_error_msg(v)
+
     def error_if(self, condition: Callable[[T], bool], error_msg: str) -> "Input[T]":
         # mypy will complain that we're using a parameter with a covariant
         # type, but it's fine here

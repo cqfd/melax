@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import datetime
 from unittest import mock
 from unittest.mock import Mock
@@ -98,17 +99,41 @@ def test_button_callbacks_interspersed_with_maps() -> None:
 
 
 def test_error_helpers() -> None:
+    @dataclass
+    class PositiveNumber:
+        n: int
+
+        def __post_init__(self) -> None:
+            assert self.n > 0
+
+    def validate_positive(n: str) -> PositiveNumber:
+        _n = int(n)
+        if _n <= 0:
+            raise ValueError("Must be positive")
+        return PositiveNumber(_n)
+
     class Form(Builder):
         i = Input("Enter a number", NumberInput(is_decimal_allowed=False)).error_if(
             lambda x: x == 7, "7 is unlucky"
         )
+        j = Input("Enter a positive number", PlainTextInput()).validate(
+            validate_positive
+        )
 
-    p = Form._parse({"i": {"NumberInput": {"value": "7"}}})
-    assert p == Errors({"i": "7 is unlucky"})
+    p = Form._parse(
+        {"i": {"NumberInput": {"value": "7"}}, "j": {"PlainTextInput": {"value": "0"}}}
+    )
+    assert p == Errors({"i": "7 is unlucky", "j": "Must be positive"})
 
-    p2 = Form._parse({"i": {"NumberInput": {"value": "123"}}})
+    p2 = Form._parse(
+        {
+            "i": {"NumberInput": {"value": "123"}},
+            "j": {"PlainTextInput": {"value": "2"}},
+        }
+    )
     assert isinstance(p2, Ok)
     assert p2.value.i == 123
+    assert p2.value.j == PositiveNumber(2)
 
 
 def test_actions_blocks() -> None:
