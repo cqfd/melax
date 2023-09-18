@@ -58,7 +58,7 @@ class Modal(ABC, pydantic.BaseModel):
         return {
             "type": "modal",
             "title": PlainText(view.title)._to_slack_json(),
-            "blocks": view.blocks._to_slack_blocks_json(),
+            "blocks": view.builder._to_slack_blocks_json(),
             "submit": {"type": "plain_text", "text": view.on_submit[0]},
             "callback_id": "__melax__",
             "private_metadata": json.dumps(  # <- needs to be a string
@@ -76,11 +76,11 @@ class Modal(ABC, pydantic.BaseModel):
         def __init__(
             self,
             title: str,
-            blocks: type[SomeBuilderSubclass],
+            builder: type[SomeBuilderSubclass],
             on_submit: tuple[(str, Callable[[SomeBuilderSubclass], "OnSubmit"])],
         ) -> None:
             self.title = title
-            self.blocks = blocks
+            self.builder = builder
             self.on_submit = on_submit
 
     @dataclass

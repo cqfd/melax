@@ -321,7 +321,7 @@ class NestedBlocks(Blocks[T]):
 # Combinators
 
 
-def nested(**blocks: Blocks[T]) -> NestedBlocks[dict[str, T]]:
+def blocks(blocks: Mapping[str, Blocks[T]]) -> NestedBlocks[dict[str, T]]:
     # Not sure why mypy doesn't like this (pyright thinks it's fine)
     return NestedBlocks(blocks=blocks)  # type: ignore
 
@@ -681,14 +681,16 @@ class Input(Block[T]):
         Like map/map_or_error_msg but you can signal erros by raising
         ValueErrors.
         """
+
         # mypy complains about covariance but it's ok
-        def v(t: T) -> Ok[U] | str: # type: ignore
+        def v(t: T) -> Ok[U] | str:  # type: ignore
             try:
                 u = validator(t)
             except ValueError as e:
                 return str(e)
             else:
                 return Ok(u)
+
         return self.map_or_error_msg(v)
 
     def error_if(self, condition: Callable[[T], bool], error_msg: str) -> "Input[T]":

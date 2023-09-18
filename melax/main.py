@@ -18,7 +18,7 @@ from .blocks import (
     Errors,
     Input,
     Section,
-    nested,
+    blocks,
 )
 from .elements import (
     Button,
@@ -94,13 +94,17 @@ class ExampleModal(Modal):
             # whatever dynamic things you want when determing what keys to
             # include, at the cost of mypy not knowing as much about the type
             # of `form.extra`.
-            extra = nested(
-                something_else=Input("Something else", PlainTextInput()),
-                and_one_more=nested(
-                    thing=Input("Password", PlainTextInput()).error_unless(
-                        lambda pw: pw == "open sesame", "Wrong!"
+            extra = blocks(
+                dict(
+                    something_else=Input("Something else", PlainTextInput()),
+                    and_one_more=blocks(
+                        dict(
+                            thing=Input("Password", PlainTextInput()).error_unless(
+                                lambda pw: pw == "open sesame", "Wrong!"
+                            )
+                        ),
                     ),
-                ),
+                )
             )
 
             yay_or_nay = Actions(
@@ -124,7 +128,7 @@ class ExampleModal(Modal):
             # The blocks specification is the Form *class*; the on_submit
             # handler will receive an instance. Looks weird but actually
             # works pretty well in terms of types.
-            blocks=Form,
+            builder=Form,
             on_submit=("Click me!", on_submit),
         )
 
@@ -185,7 +189,7 @@ class NiceToMeetYouModal(Modal):
             print(f"{form.sound_good=} {form.dob=} {form.button=}")
 
         return Modal.View(
-            title="Nice to meet you!", blocks=Form, on_submit=("Ok", on_submit)
+            title="Nice to meet you!", builder=Form, on_submit=("Ok", on_submit)
         )
 
     def on_enter_pressed(self, msg_so_far: str) -> None:
@@ -198,6 +202,7 @@ class NiceToMeetYouModal(Modal):
 class TestModal(Modal):
     name: str
     age: int
+    keys: list[str] = ["A", "B"]
 
     def render(self) -> Modal.View:
         class Form(Builder):
@@ -211,6 +216,11 @@ class TestModal(Modal):
                 button=Button("Click", value="ok").on_pressed(print),
             )
 
+            stuff = blocks({k: Input(k, PlainTextInput()) for k in self.keys})
+            reorder = Actions(
+                button=Button("Reorder").on_pressed(lambda _: self.keys.reverse()),
+            )
+
             not_actually_optional = Input(
                 "Not actually optional",
                 PlainTextInput(),
@@ -220,9 +230,9 @@ class TestModal(Modal):
             )
 
         def on_submit(form: Form) -> None:
-            self.dm(form.best_friend, CoolnessCheck())
+            print("Cool!")
 
-        return Modal.View(title="Test", blocks=Form, on_submit=("Ok", on_submit))
+        return Modal.View(title="Test", builder=Form, on_submit=("Ok", on_submit))
 
 
 class CoolnessCheck(Message):
@@ -279,7 +289,7 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     # whatever thing on the user's screen led to this callback
     view = modal.render()
     # Parse whatever the user filled in
-    result = view.blocks._parse(body["view"]["state"]["values"])
+    result = view.builder._parse(body["view"]["state"]["values"])
     assert result is not None
     if isinstance(result, Errors):
         context.ack(response_action="errors", errors=result.errors)
@@ -338,7 +348,7 @@ def handle_block_actions(
     # whatever thing on the user's screen led to this callback
     view = modal.render()
     # Run the action handler
-    view.blocks._on_block_action(action["block_id"], action["action_id"], action)
+    view.builder._on_block_action(action["block_id"], action["action_id"], action)
     # And then *re*-render the modal again, since its state may have changed
     client.views_update(
         view_id=body["view"]["id"],
@@ -362,7 +372,7 @@ def handle_options(
     modal = modal_type.model_validate(private_metadata["value"])
 
     view = modal.render()
-    options = view.blocks._on_block_options(body["block_id"], body["action_id"], query)
+    options = view.builder._on_block_options(body["block_id"], body["action_id"], query)
     new_state = modal.model_dump_json()
     assert (
         new_state == original_state
