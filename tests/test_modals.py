@@ -221,7 +221,7 @@ def test_select_elements() -> None:
         }
     )
     assert isinstance(p, Ok)
-    assert p.value.fav_ice_cream
+    assert p.value.fav_ice_cream == "chocolate"
 
     def external_options(query: str) -> list[Option]:
         opts = [Option._from(o) for o in static_options]
