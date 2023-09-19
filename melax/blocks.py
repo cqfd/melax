@@ -321,7 +321,7 @@ class NestedBlocks(Blocks[T]):
 # Combinators
 
 
-def blocks(blocks: Mapping[str, Blocks[T]]) -> NestedBlocks[dict[str, T]]:
+def blocks(blocks: Mapping[str, Blocks[T]]) -> Blocks[dict[str, T]]:
     # Not sure why mypy doesn't like this (pyright thinks it's fine)
     return NestedBlocks(blocks=blocks)  # type: ignore
 
@@ -332,29 +332,28 @@ T3 = TypeVar("T3", covariant=True)
 
 
 @overload
-def sequence() -> NestedBlocks[tuple[()]]:
+def sequence(blocks: tuple[()]) -> Blocks[tuple[()]]:
     ...
 
 
 @overload
-def sequence(b1: tuple[str, Blocks[T1]], /) -> NestedBlocks[tuple[T1]]:
-    ...
-
-
-@overload
-def sequence(
-    b1: tuple[str, Blocks[T1]], b2: tuple[str, Blocks[T2]], /
-) -> NestedBlocks[tuple[T1, T2]]:
+def sequence(blocks: tuple[tuple[str, Blocks[T1]]], /) -> Blocks[tuple[T1]]:
     ...
 
 
 @overload
 def sequence(
-    b1: tuple[str, Blocks[T1]],
-    b2: tuple[str, Blocks[T2]],
-    b3: tuple[str, Blocks[T3]],
-    /,
-) -> NestedBlocks[tuple[T1, T2, T3]]:
+    blocks: tuple[tuple[str, Blocks[T1]], tuple[str, Blocks[T2]]]
+) -> Blocks[tuple[T1, T2]]:
+    ...
+
+
+@overload
+def sequence(
+    blocks: tuple[
+        tuple[str, Blocks[T1]], tuple[str, Blocks[T2]], tuple[str, Blocks[T3]]
+    ]
+) -> Blocks[tuple[T1, T2, T3]]:
     ...
 
 
@@ -362,13 +361,13 @@ def sequence(
 
 
 @overload
-def sequence(*bs: tuple[str, Blocks[T]]) -> NestedBlocks[tuple[T, ...]]:
+def sequence(blocks: tuple[tuple[str, Blocks[T]], ...]) -> Blocks[tuple[T, ...]]:
     ...
 
 
 # not sure why I need Any here :/
-def sequence(*bs: Any) -> Any:
-    return NestedBlocks(blocks=dict(bs)).map(lambda x: tuple(x.values()))
+def sequence(blocks: Any) -> Any:
+    return NestedBlocks(blocks=dict(blocks)).map(lambda x: tuple(x.values()))
 
 
 class Actions(Block[T]):

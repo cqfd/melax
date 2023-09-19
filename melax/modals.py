@@ -15,6 +15,24 @@ _modals: dict[str, type["Modal"]] = {}
 SomeBuilderSubclass = TypeVar("SomeBuilderSubclass", bound=Builder)
 
 
+class View:
+    """
+    Bundles a collection of blocks with a submit handler, in a type-safe way.
+
+    https://api.slack.com/reference/surfaces/views
+    """
+
+    def __init__(
+        self,
+        title: str,
+        builder: type[SomeBuilderSubclass],
+        on_submit: tuple[(str, Callable[[SomeBuilderSubclass], "OnSubmit"])],
+    ) -> None:
+        self.title = title
+        self.builder = builder
+        self.on_submit = on_submit
+
+
 class Modal(ABC, pydantic.BaseModel):
     """
     What you'll subclass in order to define a modal.
@@ -25,7 +43,7 @@ class Modal(ABC, pydantic.BaseModel):
     """
 
     @abstractmethod
-    def render(self) -> "View":
+    def render(self) -> View:
         ...
 
     _client: slack_sdk.WebClient = pydantic.PrivateAttr()
@@ -65,23 +83,6 @@ class Modal(ABC, pydantic.BaseModel):
                 {"type": fully_qualified_class_name, "value": self.model_dump()}
             ),
         }
-
-    class View:
-        """
-        Bundles a collection of blocks with a submit handler, in a type-safe way.
-
-        https://api.slack.com/reference/surfaces/views
-        """
-
-        def __init__(
-            self,
-            title: str,
-            builder: type[SomeBuilderSubclass],
-            on_submit: tuple[(str, Callable[[SomeBuilderSubclass], "OnSubmit"])],
-        ) -> None:
-            self.title = title
-            self.builder = builder
-            self.on_submit = on_submit
 
     @dataclass
     class Push:

@@ -19,6 +19,7 @@ from .blocks import (
     Input,
     Section,
     blocks,
+    sequence,
 )
 from .elements import (
     Button,
@@ -29,7 +30,7 @@ from .elements import (
     UsersSelect,
 )
 from .messages import Message, _messages
-from .modals import Modal, OnSubmit, _modals
+from .modals import Modal, OnSubmit, View, _modals
 from .types import Ok, PlainText
 
 
@@ -48,7 +49,7 @@ class ExampleModal(Modal):
     click_count: int = 0
     name: str | None = None
 
-    def render(self) -> Modal.View:
+    def render(self) -> View:
         # Declare a collection of blocks, in such a way that the on_submit
         # below can get nice type-safety. (Looks weird to declare a new class
         # inside the render method, but it works.)
@@ -123,7 +124,7 @@ class ExampleModal(Modal):
             return Modal.Push(NiceToMeetYouModal(name=form.name))
 
         # Finally, render returns a View that bundles everything together.
-        return Modal.View(
+        return View(
             title="Example" if self.name is None else f"Hello {self.name}!",
             # The blocks specification is the Form *class*; the on_submit
             # handler will receive an instance. Looks weird but actually
@@ -170,7 +171,7 @@ class ExampleModal(Modal):
 class NiceToMeetYouModal(Modal):
     name: str
 
-    def render(self) -> Modal.View:
+    def render(self) -> View:
         class Form(Builder):
             sound_good = (
                 Input(
@@ -188,7 +189,7 @@ class NiceToMeetYouModal(Modal):
         def on_submit(form: Form) -> None:
             print(f"{form.sound_good=} {form.dob=} {form.button=}")
 
-        return Modal.View(
+        return View(
             title="Nice to meet you!", builder=Form, on_submit=("Ok", on_submit)
         )
 
@@ -199,12 +200,70 @@ class NiceToMeetYouModal(Modal):
         print(f"on_character_entered: {msg_so_far=}")
 
 
+class TalkModal(Modal):
+    name: str | None = None
+
+    num_friends_at_work: int | None = None
+
+    def render(self) -> View:
+        class Form(Builder):
+            name = Input(
+                "What is your name?",
+                PlainTextInput().on_character_entered(self.name_changed),
+            )
+            _greeting = (
+                Section(f"Wow, {self.name} is a nice name 😌")
+                if self.name is not None
+                else None
+            )
+
+            age = Input("What is your age?", NumberInput(is_decimal_allowed=True))
+            dob = Input("Date of birth", DatePicker())
+
+            num_friends_at_work = (
+                Input(
+                    "How many friends do you have at work?",
+                    NumberInput(is_decimal_allowed=False),
+                )
+                if self.num_friends_at_work is None
+                else None
+            )
+
+            friends_at_work = sequence(
+                tuple(
+                    (str(i), Input(f"Friend {i}", UsersSelect()))
+                    for i in range(self.num_friends_at_work or 0)
+                )
+            )
+
+        def on_submit(form: Form) -> OnSubmit:
+            if self.num_friends_at_work is None:
+                assert form.num_friends_at_work is not None
+                self.num_friends_at_work = form.num_friends_at_work
+                return self
+
+            print(f"{form.name=} {form.age=} {form.dob=}")
+            for friend in form.friends_at_work:
+                print(f"{friend} is one of your friends at work!")
+            return None
+
+        return View(
+            title="I'm the title" if self.name is None else f"Hi {self.name}!",
+            builder=Form,
+            on_submit=("Ok", on_submit),
+        )
+
+    def name_changed(self, name: str) -> None:
+        print(f"Name changed: {name=}")
+        self.name = name
+
+
 class TestModal(Modal):
     name: str
     age: int
     keys: list[str] = ["A", "B"]
 
-    def render(self) -> Modal.View:
+    def render(self) -> View:
         class Form(Builder):
             foo = Section("Hi!", accessory=DatePicker())
             bar = Input("Bar", DatePicker())
@@ -223,7 +282,7 @@ class TestModal(Modal):
 
             not_actually_optional = Input(
                 "Not actually optional",
-                PlainTextInput(),
+                PlainTextInput(initial_value="hi"),
                 optional=True,
             ).map_or_error_msg(
                 lambda x: Ok(x) if x is not None else "Actually this is required lol"
@@ -232,7 +291,7 @@ class TestModal(Modal):
         def on_submit(form: Form) -> None:
             print("Cool!")
 
-        return Modal.View(title="Test", builder=Form, on_submit=("Ok", on_submit))
+        return View(title="Test", builder=Form, on_submit=("Ok", on_submit))
 
 
 class CoolnessCheck(Message):
@@ -264,7 +323,7 @@ def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> 
     context.ack()
 
     # modal = NiceToMeetYouModal(name="Alan")
-    modal = TestModal(name="Alan", age=38)
+    modal = TalkModal()
 
     print(json.dumps(modal._to_slack_view_json(), indent=2))
 
