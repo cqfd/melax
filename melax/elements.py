@@ -275,6 +275,7 @@ class PlainTextInput(Element[T]):
             "type": "plain_text_input",
             "multiline": self.multiline,
             "focus_on_load": self.focus_on_load,
+            **({"initial_value": self.initial_value} if self.initial_value else {}),
             **(
                 {"placehodler": PlainText(self.placeholder)._to_slack_json()}
                 if self.placeholder is not None
