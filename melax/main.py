@@ -19,7 +19,6 @@ from .blocks import (
     Input,
     Section,
     blocks,
-    sequence,
 )
 from .elements import (
     Button,
@@ -229,14 +228,15 @@ class TalkModal(Modal):
                 else None
             )
 
-            friends_at_work = sequence(
-                tuple(
+            friends_at_work = blocks(
+                [
                     (str(i), Input(f"Friend {i}", UsersSelect()))
                     for i in range(self.num_friends_at_work or 0)
-                )
+                ]
             )
 
         def on_submit(form: Form) -> OnSubmit:
+
             if self.num_friends_at_work is None:
                 assert form.num_friends_at_work is not None
                 self.num_friends_at_work = form.num_friends_at_work
