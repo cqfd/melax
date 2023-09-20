@@ -268,7 +268,10 @@ class PlainTextInput(Element[T]):
         assert isinstance(
             payload, dict
         ), f"Unexpected PlainTextInput payload: {payload=}"
-        return Ok(payload["value"])
+        value = payload.get("value")
+        if value is None:
+            return None
+        return Ok(value)
 
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
@@ -441,7 +444,12 @@ class Select(Element[T]):
             return None
 
         assert isinstance(payload, dict)
-        v = payload["selected_option"]["value"]
+
+        selected_option = payload.get("selected_option")
+        if selected_option is None:
+            return None
+
+        v = selected_option["value"]
         assert isinstance(v, str)
         return Ok(v)
 

@@ -3,14 +3,7 @@ import datetime
 from unittest import mock
 from unittest.mock import Mock
 
-from melax.blocks import (
-    Actions,
-    Builder,
-    Errors,
-    Input,
-    Ok,
-    Section,
-)
+from melax.blocks import Actions, Builder, Errors, Input, Ok, Section, blocks
 from melax.elements import (
     Button,
     DatePicker,
@@ -37,7 +30,7 @@ def test_input_blocks() -> None:
     assert isinstance(p.value, Form)
     assert p.value.name == "Foo"
 
-    Form._on_block_action("name", "PlainTextInput", {"value": "Foo"})
+    Form._on_block_action(["name"], "PlainTextInput", {"value": "Foo"})
     cb.assert_called_with("Foo")
 
 
@@ -158,7 +151,7 @@ def test_actions_blocks() -> None:
         "action_ts": "1694859764.558458",
     }
 
-    Form._on_block_action("yay_or_nay", "yay", yay_action)
+    Form._on_block_action(["yay_or_nay"], "yay", yay_action)
     yay.assert_called_with("yay")
 
     today = datetime.date.today()
@@ -172,7 +165,7 @@ def test_actions_blocks() -> None:
         "action_ts": "1694860134.517951",
     }
 
-    Form._on_block_action("yay_or_nay", "dob", date_picker_action)
+    Form._on_block_action(["yay_or_nay"], "dob", date_picker_action)
     dob.assert_called_with(today)
 
     submit_payload = {
@@ -232,7 +225,7 @@ def test_select_elements() -> None:
     class Dynamic(Builder):
         fav_ice_cream = Input("Favorite ice cream", Select(options=mock))
 
-    opts = Dynamic._on_block_options("fav_ice_cream", "Select", "choco")
+    opts = Dynamic._on_block_options(["fav_ice_cream"], "Select", "choco")
     mock.assert_called_with("choco")
     assert opts == [chocolate]
 
@@ -274,5 +267,23 @@ def test_users_select_elements() -> None:
         "action_ts": "1694925631.236937",
     }
 
-    Form._on_block_action("best_friend", "UsersSelect", action)
+    Form._on_block_action(["best_friend"], "UsersSelect", action)
     cb.assert_called_with(user_id)
+
+
+def test_nested_parsing() -> None:
+    class Form(Builder):
+        stuff = blocks(
+            {"A": Input("A", PlainTextInput()), "B": Input("B", PlainTextInput())}
+        )
+
+    p = Form._parse(
+        {
+            "stuff": {
+                "A": {"PlainTextInput": {"value": None}},
+                "B": {"PlainTextInput": {"value": "bar"}},
+            }
+        }
+    )
+    assert p is None
+

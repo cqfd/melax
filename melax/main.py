@@ -318,6 +318,24 @@ class CoolnessCheck(Message):
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
+def inflate_block_ids(values: dict[str, Any]) -> dict[str, Any]:
+    def set(result: dict[str, Any], path: list[str], value: Any) -> None:
+        if len(path) == 1:
+            result[path[0]] = value
+            return
+        prefix = path[0]
+        rest = path[1:]
+        if prefix not in result:
+            result[prefix] = {}
+        set(result[prefix], rest, value)
+
+    result: dict[str, Any] = {}
+    for k, v in values.items():
+        set(result, k.split("$"), v)
+
+    return result
+
+
 @app.command("/do")  # <- or whatever your command is called
 def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> None:
     context.ack()
@@ -336,6 +354,8 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
 
     print(json.dumps(body, indent=2))
 
+    values = inflate_block_ids(body["view"]["state"]["values"])
+
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
     modal = modal_type.model_validate(private_metadata["value"])
@@ -348,7 +368,7 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     # whatever thing on the user's screen led to this callback
     view = modal.render()
     # Parse whatever the user filled in
-    result = view.builder._parse(body["view"]["state"]["values"])
+    result = view.builder._parse(values)
     assert result is not None
     if isinstance(result, Errors):
         context.ack(response_action="errors", errors=result.errors)
@@ -375,6 +395,8 @@ def handle_block_actions(
     context.ack()
 
     print(json.dumps(body, indent=2))
+
+    values = inflate_block_ids(body["view"]["state"]["values"])
 
     actions = body["actions"]
     assert len(actions) == 1, f"Weird, got more than one action: {actions}"
@@ -407,7 +429,9 @@ def handle_block_actions(
     # whatever thing on the user's screen led to this callback
     view = modal.render()
     # Run the action handler
-    view.builder._on_block_action(action["block_id"].split('$'), action["action_id"], action)
+    view.builder._on_block_action(
+        action["block_id"].split("$"), action["action_id"], action
+    )
     # And then *re*-render the modal again, since its state may have changed
     client.views_update(
         view_id=body["view"]["id"],

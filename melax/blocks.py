@@ -67,6 +67,12 @@ class Blocks(Mappable[T], DescriptorHack[T]):
     eventually produce a value of type T once the user submits the modal.
     """
 
+    _name: list[str]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._name = []
+
     @abstractmethod
     def _extract(self, payload: object) -> Parsed[object]:
         """
@@ -102,9 +108,8 @@ class Blocks(Mappable[T], DescriptorHack[T]):
     ) -> Sequence[Option]:
         ...
 
-    @abstractmethod
     def __set_name__(self, owner: Any, name: str) -> None:
-        ...
+        self._name.insert(0, name)
 
     @abstractmethod
     def is_interactive(self) -> bool:
@@ -121,8 +126,6 @@ class Block(Blocks[T]):
     """
     https://api.slack.com/reference/block-kit/blocks?ref=bk
     """
-
-    _block_id: str | None = None
 
     def _to_slack_blocks_json(self) -> Sequence[Mapping[str, JSON]]:
         if self._block_id is None:
@@ -156,11 +159,9 @@ class Block(Blocks[T]):
     def _on_options(self, action_id: str, query: str) -> Sequence[Option]:
         ...
 
-    def __set_name__(self, owner: Any, name: str) -> None:
-        if self._block_id is None:
-            self._block_id = name
-        else:
-            self._block_id = f"{name}${self._block_id}"
+    @property
+    def _block_id(self) -> str | None:
+        return "$".join(self._name) if self._name else None
 
     # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "Block[U]":
@@ -216,7 +217,6 @@ X = TypeVar("X", covariant=True)
 
 
 class NestedBlocks(Blocks[T]):
-    _name: str | None
 
     def __init__(
         self: "NestedBlocks[dict[str, X]]",
@@ -225,7 +225,6 @@ class NestedBlocks(Blocks[T]):
         rename_children: bool = True,
     ) -> None:
         super().__init__()
-        self._name = None
         self.blocks = blocks
         if rename_children:
             for block_id, block in blocks.items():
@@ -250,24 +249,15 @@ class NestedBlocks(Blocks[T]):
 
     def _extract(self, payload: object) -> Parsed[object]:
         assert isinstance(payload, dict)
-
-        toplevel_keys = {k.split("$")[0] for k in payload}
         assert (
-            self.blocks.keys() >= toplevel_keys
-        ), f"Unexpected keys: {toplevel_keys - self.blocks.keys()}, {payload=}"
+            self.blocks.keys() >= payload.keys()
+        ), f"Unexpected keys: {payload.keys() - self.blocks.keys()}, {payload=}"
 
         result = {}
         errors: dict[str, str] = {}
         for name, block in self.blocks.items():
-            if isinstance(block, Block):
-                v = payload.get(name)
-            else:
-                v = {
-                    k.removeprefix(f"{name}$"): v
-                    for k, v in payload.items()
-                    if k.startswith(f"{name}$")
-                }
-            p = block._parse(v)
+            v = payload.get(name)
+            p = block._parse(payload.get(name))
             match p:
                 case None:
                     print(f"Failed to parse: {name=} {block=} {v=}")
@@ -298,10 +288,7 @@ class NestedBlocks(Blocks[T]):
         )
 
     def __set_name__(self, owner: Any, name: str) -> None:
-        if self._name is None:
-            self._name = name
-        else:
-            self._name = f"{name}${self._name}"
+        super().__set_name__(owner, name)
 
         for block in self.blocks.values():
             block.__set_name__(owner, name)
