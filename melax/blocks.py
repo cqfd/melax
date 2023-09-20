@@ -564,7 +564,7 @@ class Section(Block[T]):
         assert isinstance(payload, dict)
 
         action_id = self.accessory.__class__.__name__
-        p = self.accessory._parse(payload[action_id])
+        p = self.accessory._parse(payload.get(action_id))
         if p is None:
             return Ok(None)
         return p
@@ -749,7 +749,7 @@ class Input(Block[T]):
         assert isinstance(payload, dict)
         action_id = self.element.__class__.__name__
 
-        return self.element._parse(payload[action_id])
+        return self.element._parse(payload.get(action_id))
 
     def _on_action(self, action_id: str, action: object) -> None:
         assert action_id == self.element.__class__.__name__
