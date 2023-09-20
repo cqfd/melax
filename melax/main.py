@@ -387,7 +387,7 @@ def handle_block_actions(
         message_type = _messages[private_metadata["type"]]
         message = message_type.model_validate(private_metadata["value"])
         message.render()._on_block_action(
-            action["block_id"], action["action_id"], action
+            action["block_id"].split("$"), action["action_id"], action
         )
 
         client.chat_update(
@@ -407,7 +407,7 @@ def handle_block_actions(
     # whatever thing on the user's screen led to this callback
     view = modal.render()
     # Run the action handler
-    view.builder._on_block_action(action["block_id"], action["action_id"], action)
+    view.builder._on_block_action(action["block_id"].split('$'), action["action_id"], action)
     # And then *re*-render the modal again, since its state may have changed
     client.views_update(
         view_id=body["view"]["id"],
@@ -431,7 +431,9 @@ def handle_options(
     modal = modal_type.model_validate(private_metadata["value"])
 
     view = modal.render()
-    options = view.builder._on_block_options(body["block_id"], body["action_id"], query)
+    options = view.builder._on_block_options(
+        body["block_id"].split("$"), body["action_id"], query
+    )
     new_state = modal.model_dump_json()
     assert (
         new_state == original_state

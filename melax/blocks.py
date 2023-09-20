@@ -91,12 +91,14 @@ class Blocks(Mappable[T], DescriptorHack[T]):
         ...
 
     @abstractmethod
-    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
+    def _on_block_action(
+        self, block_id: list[str], action_id: str, action: object
+    ) -> None:
         ...
 
     @abstractmethod
     def _on_block_options(
-        self, block_id: str, action_id: str, query: str
+        self, block_id: list[str], action_id: str, query: str
     ) -> Sequence[Option]:
         ...
 
@@ -136,7 +138,9 @@ class Block(Blocks[T]):
     def _extract(self, payload: object) -> Ok[object] | None:
         ...
 
-    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
+    def _on_block_action(
+        self, block_id: list[str], action_id: str, action: object
+    ) -> None:
         return self._on_action(action_id, action)
 
     @abstractmethod
@@ -144,7 +148,7 @@ class Block(Blocks[T]):
         ...
 
     def _on_block_options(
-        self, block_id: str, action_id: str, query: str
+        self, block_id: list[str], action_id: str, query: str
     ) -> Sequence[Option]:
         return self._on_options(action_id, query)
 
@@ -196,12 +200,14 @@ class Builder:
         return cls._dict._to_slack_blocks_json()
 
     @classmethod
-    def _on_block_action(cls, block_id: str, action_id: str, action: object) -> None:
+    def _on_block_action(
+        cls, block_id: list[str], action_id: str, action: object
+    ) -> None:
         return cls._dict._on_block_action(block_id, action_id, action)
 
     @classmethod
     def _on_block_options(
-        cls, block_id: str, action_id: str, query: str
+        cls, block_id: list[str], action_id: str, query: str
     ) -> Sequence[Option]:
         return cls._dict._on_block_options(block_id, action_id, query)
 
@@ -279,17 +285,17 @@ class NestedBlocks(Blocks[T]):
         print()
         return Ok(result)
 
-    def _on_block_action(self, block_id: str, action_id: str, action: object) -> None:
-        path = block_id.split("$", 1)
-        suffix = "$".join(path[1:])
-        self.blocks[path[0]]._on_block_action(suffix, action_id, action)
+    def _on_block_action(
+        self, block_id: list[str], action_id: str, action: object
+    ) -> None:
+        self.blocks[block_id[0]]._on_block_action(block_id[1:], action_id, action)
 
     def _on_block_options(
-        self, block_id: str, action_id: str, query: str
+        self, block_id: list[str], action_id: str, query: str
     ) -> Sequence[Option]:
-        path = block_id.split("$", 1)
-        suffix = "$".join(path[1:])
-        return self.blocks[path[0]]._on_block_options(suffix, action_id, query)
+        return self.blocks[block_id[0]]._on_block_options(
+            block_id[1:], action_id, query
+        )
 
     def __set_name__(self, owner: Any, name: str) -> None:
         if self._name is None:
@@ -326,10 +332,10 @@ T2 = TypeVar("T2", covariant=True)
 T3 = TypeVar("T3", covariant=True)
 T_noco = TypeVar("T_noco")
 
+
 @overload
 def blocks(blocks: Mapping[str, Blocks[T]]) -> Blocks[dict[str, T]]:
     ...
-
 
 
 @overload
