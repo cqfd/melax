@@ -15,7 +15,6 @@ from .blocks import (
     Blocks,
     Builder,
     Divider,
-    Errors,
     Input,
     Section,
     blocks,
@@ -30,7 +29,7 @@ from .elements import (
 )
 from .messages import Message, _messages
 from .modals import Modal, OnSubmit, View, _modals
-from .types import Ok, PlainText
+from .types import Bind, Errors, Ok, PlainText
 
 
 class IceCream(Enum):
@@ -99,8 +98,8 @@ class ExampleModal(Modal):
                     something_else=Input("Something else", PlainTextInput()),
                     and_one_more=blocks(
                         dict(
-                            thing=Input("Password", PlainTextInput()).error_unless(
-                                lambda pw: pw == "open sesame", "Wrong!"
+                            thing=Input("Password", PlainTextInput()).error_if(
+                                lambda pw: pw != "open sesame", "Wrong!"
                             )
                         ),
                     ),
@@ -177,8 +176,8 @@ class NiceToMeetYouModal(Modal):
                     "Sound good?",
                     PlainTextInput().on_character_entered(self.on_character_entered),
                 )
-                .error_unless(lambda msg: len(msg) >= 5, "Gotta be at least 5 chars")
-                .error_if(lambda msg: len(msg) > 10, "Too long")
+                .error_if(lambda msg: len(msg) < 5, "Gotta be at least 5 chars")
+                .error_if(lambda msg: 10 < len(msg), "Too long")
             )
             dob = Section("Date of birth", accessory=DatePicker())
             button = Section(
@@ -236,7 +235,6 @@ class TalkModal(Modal):
             )
 
         def on_submit(form: Form) -> OnSubmit:
-
             if self.num_friends_at_work is None:
                 assert form.num_friends_at_work is not None
                 self.num_friends_at_work = form.num_friends_at_work
@@ -264,13 +262,19 @@ class TestModal(Modal):
     keys: list[str] = ["A", "B"]
 
     def render(self) -> View:
+        def on_best_friend_selected(user_id: str) -> None:
+            print(f"Best friend selected: {user_id}")
+            print(f"{locals()=}")
+
         class Form(Builder):
             foo = Section("Hi!", accessory=DatePicker())
             bar = Input("Bar", DatePicker())
             fav_color = Input(
                 "Fav color", Select(options=[Select.Option(text="Blue", value="blue")])
             )
-            best_friend = Input("Best friend", UsersSelect().on_selected(print))
+            best_friend = Input(
+                "Best friend", UsersSelect().on_selected(on_best_friend_selected)
+            )
             actions = Actions(
                 button=Button("Click", value="ok").on_pressed(print),
             )
@@ -289,7 +293,7 @@ class TestModal(Modal):
             )
 
         def on_submit(form: Form) -> None:
-            print("Cool!")
+            print(f"Cool! {vars(form)=}")
 
         return View(title="Test", builder=Form, on_submit=("Ok", on_submit))
 
@@ -313,6 +317,24 @@ class CoolnessCheck(Message):
     def on_button_pressed(self, v: str) -> None:
         print(f"CoolnessCheck {v=}")
         self.click_count += 1
+
+
+class BindingCheck(Modal):
+    name_element: Bind[str] = Bind()
+
+    def render(self) -> View:
+        class Form(Builder):
+            name = Input("Name", PlainTextInput().bind(self.name_element)).error_if(
+                lambda name: len(name) < 5, "Too short"
+            )
+            dob = Input("Age", DatePicker().on_picked(self.on_dob_picked))
+
+        return View(
+            title="Binding check", builder=Form, on_submit=("Ok", lambda _: None)
+        )
+
+    def on_dob_picked(self, d: datetime.date) -> None:
+        print(f"BindingCheck: on_dob_picked {d=} {self.name_element.value=}")
 
 
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
@@ -341,7 +363,8 @@ def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> 
     context.ack()
 
     # modal = NiceToMeetYouModal(name="Alan")
-    modal = TalkModal()
+    # modal = TestModal(name="Alan", age=38)
+    modal = BindingCheck()
 
     print(json.dumps(modal._to_slack_view_json(), indent=2))
 
@@ -424,10 +447,14 @@ def handle_block_actions(
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
     modal = modal_type.model_validate(private_metadata["value"])
+    modal._values = values
 
     # *re*-render the modal, which had better produce the same view as
     # whatever thing on the user's screen led to this callback
     view = modal.render()
+    # Hack: parse so we can wire up any bindings *before* running the
+    # actual action handler.
+    view.builder._parse(values)
     # Run the action handler
     view.builder._on_block_action(
         action["block_id"].split("$"), action["action_id"], action
@@ -453,6 +480,7 @@ def handle_options(
     modal_type = _modals[private_metadata["type"]]
     original_state = private_metadata["value"]
     modal = modal_type.model_validate(private_metadata["value"])
+    modal._values = body["view"]["state"]["values"]
 
     view = modal.render()
     options = view.builder._on_block_options(

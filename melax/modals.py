@@ -6,12 +6,13 @@ from typing import Any, Callable, TypeVar, Union
 import pydantic
 import slack_sdk
 
-from .blocks import Builder, Errors
+from .blocks import Builder
 from .messages import Message
-from .types import PlainText
+from .types import Errors, PlainText
 
 _modals: dict[str, type["Modal"]] = {}
 
+T = TypeVar("T")
 SomeBuilderSubclass = TypeVar("SomeBuilderSubclass", bound=Builder)
 
 

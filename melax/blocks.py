@@ -1,5 +1,5 @@
+import copy
 from abc import abstractmethod
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -16,7 +16,18 @@ from typing import (
 )
 
 from .elements import Element
-from .types import JSON, Mappable, Mrkdwn, Ok, Option, PlainText, Text
+from .types import (
+    JSON,
+    Bind,
+    Errors,
+    Eventual,
+    Mrkdwn,
+    Ok,
+    Option,
+    Parsed,
+    PlainText,
+    Text,
+)
 
 T = TypeVar("T", covariant=True)
 U = TypeVar("U", covariant=True)
@@ -36,61 +47,26 @@ class DescriptorHack(Generic[T]):
             ...
 
         @overload
-        def __get__(self, obj: None, objtype: type["Builder"]) -> Self:
+        def __get__(self, obj: Any, objtype: Any) -> Self:
             ...
 
         def __get__(self, obj: "Builder" | None, objtype: type["Builder"]) -> T | Self:
             ...
 
 
-@dataclass
-class Errors:
-    errors: dict[str, str]
-
-    def __init__(self, *errors: dict[str, str]) -> None:
-        self.errors = {
-            block_id: msg for error in errors for block_id, msg in error.items()
-        }
-
-
-Parsed = Ok[T] | Errors | None
-"""
-A Parsed[T] is either an Ok[T] if parsing went well, some Errors if parsing
-went poorly, or None if parsing was skipped (e.g. because some part of a modal
-hasn't even been filled in yet).
-"""
-
-
-class Blocks(Mappable[T], DescriptorHack[T]):
+class Blocks(Eventual[T], DescriptorHack[T]):
     """
     A value of type Blocks[T] is a recipe for some number of blocks that will
     eventually produce a value of type T once the user submits the modal.
     """
 
     _name: list[str]
+    _inner: "Blocks[Any] | None"
 
     def __init__(self) -> None:
         super().__init__()
         self._name = []
-
-    @abstractmethod
-    def _extract(self, payload: object) -> Parsed[object]:
-        """
-        Extract the raw "value" of the payload Slack sent us in a
-        webhook. Subclasses can pick whatever return type they find
-        appropriate; it will be up to any _xforms added by calls to .map() to
-        transform this "raw" extraction into a value of type T.
-
-        This feels pretty awkward but I'm not sure how else to do it.
-        """
-        ...
-
-    def _parse(self, payload: object) -> Parsed[T]:
-        raw = self._extract(payload)
-        if isinstance(raw, Ok):
-            return Ok(self._xform(raw.value))
-        else:
-            return raw
+        self._bind = None
 
     @abstractmethod
     def _to_slack_blocks_json(self) -> Sequence[Mapping[str, JSON]]:
@@ -118,8 +94,14 @@ class Blocks(Mappable[T], DescriptorHack[T]):
     # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "Blocks[U]":
         u = super().map(f)
-        assert isinstance(u, self.__class__)
+        assert isinstance(u, Blocks)
+        u._bind = None
         return u
+
+    def bind(self, bind: Bind[T]) -> "Blocks[T]":
+        t = super().bind(bind)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class Block(Blocks[T]):
@@ -135,10 +117,6 @@ class Block(Blocks[T]):
 
     @abstractmethod
     def _to_slack_json(self) -> Mapping[str, JSON]:
-        ...
-
-    @abstractmethod
-    def _extract(self, payload: object) -> Ok[object] | None:
         ...
 
     def _on_block_action(
@@ -185,16 +163,14 @@ class Builder:
 
     @classmethod
     def _parse(cls, payload: object) -> Parsed[Self]:
-        p = cls._dict._parse(payload)
-        if p is None:
-            return None
-        if isinstance(p, Errors):
+        p = cls._dict.parse(payload)
+        if p is None or isinstance(p, Errors):
             return p
 
-        self = cls()
+        instance = cls()
         for k, v in p.value.items():
-            setattr(self, k, v)
-        return Ok(self)
+            setattr(instance, k, v)
+        return Ok(instance)
 
     @classmethod
     def _to_slack_blocks_json(cls) -> Sequence[JSON]:
@@ -217,7 +193,6 @@ X = TypeVar("X", covariant=True)
 
 
 class NestedBlocks(Blocks[T]):
-
     def __init__(
         self: "NestedBlocks[dict[str, X]]",
         blocks: Mapping[str, "Blocks[X]"],
@@ -257,7 +232,7 @@ class NestedBlocks(Blocks[T]):
         errors: dict[str, str] = {}
         for name, block in self.blocks.items():
             v = payload.get(name)
-            p = block._parse(payload.get(name))
+            p = block.parse(payload.get(name))
             match p:
                 case None:
                     print(f"Failed to parse: {name=} {block=} {v=}")
@@ -270,9 +245,6 @@ class NestedBlocks(Blocks[T]):
         if errors:
             return Errors(errors)
 
-        print(f"{payload=}")
-        print(f"{result=}")
-        print()
         return Ok(result)
 
     def _on_block_action(
@@ -544,7 +516,7 @@ class Section(Block[T]):
         ) -> "Section[T | None]":
             ...
 
-    def _extract(self, payload: object) -> Ok[object] | None:
+    def _extract(self, payload: object) -> Parsed[object]:
         if payload is None:
             # Bit confusing: only Input blocks can have non-optional elements.
             # It's totally fine for a Section to not get anything from its
@@ -557,7 +529,7 @@ class Section(Block[T]):
         assert isinstance(payload, dict)
 
         action_id = self.accessory.__class__.__name__
-        p = self.accessory._parse(payload.get(action_id))
+        p = self.accessory.parse(payload.get(action_id))
         if p is None:
             return Ok(None)
         return p
@@ -608,8 +580,6 @@ class Input(Block[T]):
     Input blocks are special: only they can produce red error messages.
     """
 
-    _validator: Callable[[object], Ok[T] | str] | None
-
     @overload
     def __init__(self: "Input[T]", label: str, element: Element[T]) -> None:
         ...
@@ -628,7 +598,7 @@ class Input(Block[T]):
 
     def __init__(self, label: str, element: Element[T], optional: bool = False) -> None:
         super().__init__()
-        self._validator = None
+        self._xform = lambda x: Ok(x)  # type: ignore
         self.label = label
         self.element = element
         self.optional = optional
@@ -663,22 +633,13 @@ class Input(Block[T]):
         Input block's parsed value. Potentially handy if you want to "refine"
         an Input block's type in a fallible way.
         """
-        copy = deepcopy(self)
+        return super().map(validator)  # type: ignore
 
-        # mypy will complain that we're using a parameter with a covariant
-        # type, but it's fine here
-        def v(t: T) -> Ok[U] | str:  # type: ignore
-            if self._validator is not None:
-                v = self._validator(t)
-                match v:
-                    case Ok(t):
-                        return validator(t)
-                    case error_msg:
-                        return error_msg
-            return validator(t)
+    def map(self, f: Callable[[T], U]) -> "Input[U]":
+        def v(t: T) -> Ok[U]:  # type: ignore
+            return Ok(f(t))
 
-        copy._validator = v  # type: ignore
-        return copy  # type: ignore
+        return self.map_or_error_msg(v)
 
     def validate(self, validator: Callable[[T], U]) -> "Input[U]":
         """
@@ -705,12 +666,6 @@ class Input(Block[T]):
 
         return self.map_or_error_msg(v)
 
-    def error_unless(
-        self, condition: Callable[[T], bool], error_msg: str
-    ) -> "Input[T]":
-        # again, covariance issue is fine here
-        return self.error_if(lambda t: not condition(t), error_msg)  # type: ignore
-
     def _to_slack_json(self) -> Mapping[str, JSON]:
         return {
             "type": "input",
@@ -721,28 +676,26 @@ class Input(Block[T]):
             "dispatch_action": self.element._cb is not None,
         }
 
-    # Here's where we can finally signal errors.
+    # override the default _parse implementation from Eventual
+    # here's where we can finally signal errors.
     def _parse(self, payload: object) -> Parsed[T]:
-        raw = self._extract(payload)
-        if raw is None:
-            return None
-        processed = self._xform(raw.value)
-        if self._validator is None:
-            return Ok(processed)
-        validated = self._validator(processed)
-        if isinstance(validated, str):
+        processed = super()._parse(payload)
+        if processed is None or isinstance(processed, Errors):
+            return processed
+        assert isinstance(processed, Ok)
+        if isinstance(processed.value, str):
             assert self._block_id is not None
-            return Errors({self._block_id: validated})
-        return validated
+            return Errors({self._block_id: processed.value})
+        return processed.value # type: ignore
 
-    def _extract(self, payload: object) -> Ok[object] | None:
+    def _extract(self, payload: object) -> Parsed[object]:
         if payload is None:
             return Ok(None) if self.optional else None
 
         assert isinstance(payload, dict)
         action_id = self.element.__class__.__name__
 
-        return self.element._parse(payload.get(action_id))
+        return self.element.parse(payload.get(action_id))
 
     def _on_action(self, action_id: str, action: object) -> None:
         assert action_id == self.element.__class__.__name__
@@ -762,9 +715,3 @@ class Input(Block[T]):
         """
         assert self._block_id is not None
         return {self._block_id: msg}
-
-    # Type-specific boilerplate
-    def map(self, f: Callable[[T], U]) -> "Input[U]":
-        u = super().map(f)
-        assert isinstance(u, self.__class__)
-        return u

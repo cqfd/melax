@@ -12,7 +12,8 @@ from melax.elements import (
     Select,
     UsersSelect,
 )
-from melax.types import Option
+from melax.modals import Modal, View
+from melax.types import Bind, Option
 
 
 def test_input_blocks() -> None:
@@ -287,3 +288,53 @@ def test_nested_parsing() -> None:
     )
     assert p is None
 
+
+def test_binds() -> None:
+    submit_cb = Mock()
+
+    watched_x = Bind[str]()
+    x = Input("X", PlainTextInput()).bind(watched_x)
+    y = x.map(len)
+
+    assert y._inner is x
+
+    p = y.parse({"PlainTextInput": {"value": "foo"}})
+    assert isinstance(p, Ok)
+    assert p.value == 3
+
+    class SomeModal(Modal):
+        bound_x: Bind[str] = Bind()
+        bound_int: Bind[int] = Bind()
+        bound_element: Bind[str] = Bind()
+
+        def render(self) -> View:
+            class Form(Builder):
+                x = (
+                    Input("X", PlainTextInput().bind(self.bound_element))
+                    .bind(self.bound_x)
+                    .map(len)
+                    .map(lambda i: -i)
+                    .bind(self.bound_int)
+                )
+
+            return View(
+                title="Some modal", builder=Form, on_submit=("Submit", submit_cb)
+            )
+
+    modal = SomeModal()
+
+    b = modal.render().builder
+    p = b._parse({"x": {"PlainTextInput": {"value": "foo"}}})
+
+    assert isinstance(p, Ok)
+    assert p.value.x == -3  # type: ignore
+
+    assert modal.bound_x.value == "foo"
+    assert modal.bound_int.value == -3
+    assert modal.bound_element.value == "foo"
+
+
+def test_weird_compositions() -> None:
+    # if you're going to make a compositional library I guess you have to
+    # support some weird stuff
+    pass

@@ -1,6 +1,5 @@
 import datetime
 from abc import abstractmethod
-from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
     Callable,
@@ -12,13 +11,13 @@ from typing import (
     overload,
 )
 
-from .types import JSON, Mappable, Ok, Option, PlainText
+from .types import Bind, JSON, Eventual, Ok, Option, PlainText
 
 T = TypeVar("T", covariant=True)
 U = TypeVar("U", covariant=True)
 
 
-class Element(Mappable[T]):
+class Element(Eventual[T]):
     """
     https://api.slack.com/reference/block-kit/block-elements
     """
@@ -31,14 +30,7 @@ class Element(Mappable[T]):
 
     def __init__(self) -> None:
         super().__init__()
-        self._inner = None
         self._cb = None
-
-    def _parse(self, payload: object) -> Ok[T] | None:
-        raw = self._extract(payload)
-        if raw is None:
-            return None
-        return Ok(self._xform(raw.value))
 
     @abstractmethod
     def _extract(self, payload: object) -> Ok[object] | None:
@@ -58,8 +50,8 @@ class Element(Mappable[T]):
         if self._inner is not None:
             self._inner._on_action(action)
 
-        p = self._parse(action)
-        assert p is not None, f"Failed to parse: {action=}"
+        p = self.parse(action)
+        assert isinstance(p, Ok), f"Failed to parse: {action=}"
         if self._cb is not None:
             self._cb(p.value)
 
@@ -67,29 +59,23 @@ class Element(Mappable[T]):
     # super(), but they should provide a more accurate return type.
     @abstractmethod
     def _callback(self, cb: Callable[[T], None]) -> "Element[T]":
-        copy = deepcopy(self)
-
-        def _cb(t: T) -> None:  # type: ignore
-            if self._cb is not None:
-                self._cb(t)
-            cb(t)
-
-        copy._cb = _cb
-        return copy
+        import copy
+        t = copy.copy(self)
+        t._cb = cb
+        return t
 
     @abstractmethod
     def map(self, f: Callable[[T], U]) -> "Element[U]":
-        u = deepcopy(self)
-        # Callbacks need to run with the right set of .map() transformations
-        # Each call to .map can change the type that gets passed to subsequent
-        # callbacks, so we keep track of a linked list of Elements, each of
-        # which keeps track of a single .map()'s worth of type-appropriate
-        # callbacks.
-        u._inner = self
-        u._xform = lambda x: f(u._inner._xform(x))  # type: ignore
+        u = super().map(f)
+        assert isinstance(u, Element)
         # start afresh with no callback
         u._cb = None
-        return u  # type: ignore
+        return u
+
+    def bind(self, bind: "Bind[T]") -> "Element[T]":
+        t = super().bind(bind)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class Button(Element[T]):
