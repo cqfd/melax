@@ -286,66 +286,8 @@ class NestedBlocks(Blocks[T]):
 # Combinators
 
 
-T1 = TypeVar("T1", covariant=True)
-T2 = TypeVar("T2", covariant=True)
-T3 = TypeVar("T3", covariant=True)
-T_noco = TypeVar("T_noco")
-
-
-@overload
-def blocks(blocks: Mapping[str, Blocks[T]]) -> Blocks[dict[str, T]]:
-    ...
-
-
-@overload
-def blocks(blocks: tuple[()]) -> Blocks[tuple[()]]:
-    ...
-
-
-@overload
-def blocks(blocks: tuple[tuple[str, Blocks[T1]]]) -> Blocks[tuple[T1]]:
-    ...
-
-
-@overload
-def blocks(
-    blocks: tuple[tuple[str, Blocks[T1]], tuple[str, Blocks[T2]]]
-) -> Blocks[tuple[T1, T2]]:
-    ...
-
-
-@overload
-def blocks(
-    blocks: tuple[
-        tuple[str, Blocks[T1]], tuple[str, Blocks[T2]], tuple[str, Blocks[T3]]
-    ]
-) -> Blocks[tuple[T1, T2, T3]]:
-    ...
-
-
-# etc.
-
-
-@overload
-def blocks(blocks: tuple[tuple[str, Blocks[T]], ...]) -> Blocks[tuple[T, ...]]:
-    ...
-
-
-@overload
-def blocks(blocks: list[tuple[str, Blocks[T_noco]]]) -> Blocks[list[T_noco]]:
-    ...
-
-
-# not sure why I need Any here :/
-def blocks(blocks: Any) -> Any:
-    if isinstance(blocks, dict):
-        return NestedBlocks(blocks=blocks)
-    if isinstance(blocks, tuple):
-        return NestedBlocks(blocks=dict(blocks)).map(lambda x: tuple(x.values()))
-    if isinstance(blocks, list):
-        return NestedBlocks(blocks=dict(blocks)).map(lambda x: list(x.values()))
-    assert False, f"Unexpected type: {blocks=}"
-
+def blocks(blocks: Mapping[str, Blocks[T]]) -> Blocks[Mapping[str, T]]:
+    return NestedBlocks(blocks=blocks)
 
 class Actions(Block[T]):
     def __init__(self: "Actions[dict[str, Any]]", **elements: Element[Any]) -> None:

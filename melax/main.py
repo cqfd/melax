@@ -228,10 +228,10 @@ class TalkModal(Modal):
             )
 
             friends_at_work = blocks(
-                [
-                    (str(i), Input(f"Friend {i}", UsersSelect()))
+                {
+                    str(i): Input(f"Friend {i}", UsersSelect())
                     for i in range(self.num_friends_at_work or 0)
-                ]
+                }
             )
 
         def on_submit(form: Form) -> OnSubmit:
@@ -241,7 +241,7 @@ class TalkModal(Modal):
                 return self
 
             print(f"{form.name=} {form.age=} {form.dob=}")
-            for friend in form.friends_at_work:
+            for friend in form.friends_at_work.values():
                 print(f"{friend} is one of your friends at work!")
             return None
 
