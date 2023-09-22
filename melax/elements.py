@@ -11,7 +11,7 @@ from typing import (
     overload,
 )
 
-from .types import Bind, JSON, Eventual, Ok, Option, PlainText
+from .types import JSON, Bind, Eventual, Ok, Option, PlainText
 
 T = TypeVar("T", covariant=True)
 U = TypeVar("U", covariant=True)
@@ -60,6 +60,7 @@ class Element(Eventual[T]):
     @abstractmethod
     def _callback(self, cb: Callable[[T], None]) -> "Element[T]":
         import copy
+
         t = copy.copy(self)
         t._cb = cb
         return t

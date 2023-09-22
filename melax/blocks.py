@@ -43,14 +43,14 @@ class DescriptorHack(Generic[T]):
     if TYPE_CHECKING:
 
         @overload
-        def __get__(self, obj: "Builder", objtype: type["Builder"]) -> T:
+        def __get__(self, obj: None, objtype: Any) -> Self:
             ...
 
         @overload
-        def __get__(self, obj: Any, objtype: Any) -> Self:
+        def __get__(self, obj: Any, objtype: Any) -> T:
             ...
 
-        def __get__(self, obj: "Builder" | None, objtype: type["Builder"]) -> T | Self:
+        def __get__(self, obj: Any, objtype: Any) -> T | Self:
             ...
 
 
@@ -61,7 +61,6 @@ class Blocks(Eventual[T], DescriptorHack[T]):
     """
 
     _name: list[str]
-    _inner: "Blocks[Any] | None"
 
     def __init__(self) -> None:
         super().__init__()
@@ -287,7 +286,8 @@ class NestedBlocks(Blocks[T]):
 
 
 def blocks(blocks: Mapping[str, Blocks[T]]) -> Blocks[Mapping[str, T]]:
-    return NestedBlocks(blocks=blocks)
+    return NestedBlocks(blocks=blocks)  # type: ignore
+
 
 class Actions(Block[T]):
     def __init__(self: "Actions[dict[str, Any]]", **elements: Element[Any]) -> None:
@@ -628,7 +628,7 @@ class Input(Block[T]):
         if isinstance(processed.value, str):
             assert self._block_id is not None
             return Errors({self._block_id: processed.value})
-        return processed.value # type: ignore
+        return processed.value  # type: ignore
 
     def _extract(self, payload: object) -> Parsed[object]:
         if payload is None:

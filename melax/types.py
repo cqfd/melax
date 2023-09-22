@@ -23,10 +23,21 @@ class Ok(Generic[T]):
 class Errors:
     errors: dict[str, str]
 
-    def __init__(self, *errors: dict[str, str]) -> None:
-        self.errors = {
-            block_id: msg for error in errors for block_id, msg in error.items()
-        }
+    def __init__(
+        self, errors: Mapping[str, str] | Mapping[str | tuple[str], str] | None = None
+    ) -> None:
+        self.errors = {}
+        if errors is not None:
+            for k, v in errors.items():
+                block_id = k if isinstance(k, str) else "$".join(k)
+                self.errors[block_id] = v
+
+    def add(self, block_id: str | Sequence[str], msg: str) -> None:
+        b = block_id if isinstance(block_id, str) else "$".join(block_id)
+        self.errors[b] = msg
+
+    def __bool__(self) -> bool:
+        return bool(self.errors)
 
 
 Parsed = Ok[T] | Errors | None
@@ -46,8 +57,8 @@ class Eventual(ABC, Generic[T]):
     Given an Eventual[T] and a function from T -> U, you can produce an
     Eventual[U] using the .map() method (Eventuals are functors).
 
-    An Eventual[T] can also be "bound" to a Bind[T]. TODO: explain this niche
-    usecase.
+    An Eventual[T] can also be "bound" to a Bind[T]. This is a hack, and should
+    be used only in action callbacks.
     """
 
     _xform: Callable[[Any], T]

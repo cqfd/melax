@@ -1,7 +1,10 @@
-from dataclasses import dataclass
 import datetime
+from dataclasses import dataclass
+from typing import Iterator, Protocol
 from unittest import mock
 from unittest.mock import Mock
+
+import pytest
 
 from melax.blocks import Actions, Builder, Errors, Input, Ok, Section, blocks
 from melax.elements import (
@@ -12,8 +15,17 @@ from melax.elements import (
     Select,
     UsersSelect,
 )
-from melax.modals import Modal, View
+from melax.modals import Errors as ModalErrors
+from melax.modals import Modal, OnSubmit, View
 from melax.types import Bind, Option
+
+
+@pytest.fixture(autouse=True)
+def unregister_modals() -> Iterator[None]:
+    yield
+    from melax.modals import _modals
+
+    _modals.clear()
 
 
 def test_input_blocks() -> None:
@@ -128,6 +140,49 @@ def test_error_helpers() -> None:
     assert isinstance(p2, Ok)
     assert p2.value.i == 123
     assert p2.value.j == PositiveNumber(2)
+
+
+def test_errors_in_submit_handlers() -> None:
+    class Example(Modal):
+        def render(self) -> View:
+            class Form(Builder):
+                i = Input("Enter a number", NumberInput(is_decimal_allowed=False))
+                jk = blocks(
+                    {
+                        "j": Input("Enter your name", PlainTextInput()),
+                        "k": Input(
+                            "Enter your age", NumberInput(is_decimal_allowed=False)
+                        ),
+                    }
+                )
+
+            def on_submit(f: Form) -> ModalErrors | None:
+                errors = ModalErrors()
+                if f.i == 7:
+                    errors.add("i", "wrong number")
+                if f.jk["k"] == 100:
+                    errors.add(["jk", "k"], "too old")
+                if errors:
+                    return errors
+
+                return None
+
+            return View(title="Example", builder=Form, on_submit=("Submit", on_submit))
+
+    v = Example().render()
+    p = v.builder._parse(
+        {
+            "i": {"NumberInput": {"value": "7"}},
+            "jk": {
+                "j": {"PlainTextInput": {"value": "Joe"}},
+                "k": {"NumberInput": {"value": "100"}},
+            },
+        }
+    )
+    assert isinstance(p, Ok)
+    assert v.on_submit[1](p.value) == ModalErrors(
+        {"i": "wrong number", "jk$k": "too old"}
+    )
 
 
 def test_actions_blocks() -> None:
@@ -338,3 +393,24 @@ def test_weird_compositions() -> None:
     # if you're going to make a compositional library I guess you have to
     # support some weird stuff
     pass
+
+
+def test_protocol_trick() -> None:
+    # in case you really don't want to define your submit handler inside the
+    # render function
+    class Form(Protocol):
+        name: Input[str]
+        age: Input[int]
+
+    class Example(Modal):
+        def render(self) -> View:
+            class ConcreteForm(Builder):
+                name = Input("Name", PlainTextInput())
+                age = Input("Age", NumberInput(is_decimal_allowed=False))
+
+            return View(
+                title="Example", builder=ConcreteForm, on_submit=("Ok", self.on_submit)
+            )
+
+        def on_submit(self, f: Form) -> OnSubmit:
+            return None
