@@ -78,6 +78,13 @@ def test_section_blocks() -> None:
     assert isinstance(p2.value, Form2)
     assert p2.value.s == datetime.date.fromisoformat("2023-09-02")
 
+    class Form3(Builder):
+        button = Section("I'm a button", accessory=Button("Click me!", value="ok"))
+
+    p3 = Form3._parse({})
+    assert isinstance(p3, Ok)
+    assert p3.value.button == "ok"
+
 
 def test_button_callbacks() -> None:
     cb = Mock()

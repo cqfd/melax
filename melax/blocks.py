@@ -451,17 +451,19 @@ class Section(Block[T]):
             ...
 
     def _extract(self, payload: object) -> Parsed[object]:
+        if self.accessory is None:
+            return Ok(None)
+
         if payload is None:
             # Bit confusing: only Input blocks can have non-optional elements.
             # It's totally fine for a Section to not get anything from its
             # element.
+            p = self.accessory.parse(None)
+            if isinstance(p, Ok):
+                return p
             return Ok(None)
 
-        assert (
-            self.accessory is not None
-        ), f"Section without an accessory got payload: {payload=}"
         assert isinstance(payload, dict)
-
         action_id = self.accessory.__class__.__name__
         p = self.accessory.parse(payload.get(action_id))
         if p is None:

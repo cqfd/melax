@@ -339,6 +339,33 @@ class BindingCheck(Modal):
         print(f"BindingCheck: on_dob_picked {d=} {self.name_element.value=}")
 
 
+class EdgeCase(Modal):
+    fav_ice_cream: Bind[str] = Bind()
+
+    def render(self) -> View:
+        class Form(Builder):
+            fav_ice_cream = Input(
+                "Fav ice cream:", Select(options=["chocolate", "vanilla", "strawberry"])
+            ).bind(self.fav_ice_cream)
+            button = Section(
+                "Click me",
+                accessory=Button("Click me", value="ok").on_pressed(self.on_pressed),
+            )
+
+        def on_submit(f: Form) -> None:
+            print(f"EdgeCase: on_submit {vars(f)}")
+            return None
+
+        return View(
+            title="Edge case",
+            builder=Form,
+            on_submit=("Ok", on_submit),
+        )
+
+    def on_pressed(self, v: str) -> None:
+        print(f"Button pressed: {v=} {self.fav_ice_cream.value=}")
+
+
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
