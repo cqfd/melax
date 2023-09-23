@@ -1,4 +1,3 @@
-import copy
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import (
@@ -6,7 +5,6 @@ from typing import (
     Any,
     Callable,
     ClassVar,
-    Generic,
     Literal,
     Mapping,
     Self,
@@ -33,28 +31,7 @@ T = TypeVar("T", covariant=True)
 U = TypeVar("U", covariant=True)
 
 
-class DescriptorHack(Generic[T]):
-    """
-    Tell mypy how to interpret class variables inside of Builder subclasses.
-    A class variable of type DescriptorHack[T] will turn into a regular T on
-    instances of the Builder subclass.
-    """
-
-    if TYPE_CHECKING:
-
-        @overload
-        def __get__(self, obj: None, objtype: Any) -> Self:
-            ...
-
-        @overload
-        def __get__(self, obj: Any, objtype: Any) -> T:
-            ...
-
-        def __get__(self, obj: Any, objtype: Any) -> T | Self:
-            ...
-
-
-class Blocks(Eventual[T], DescriptorHack[T]):
+class Blocks(Eventual[T]):
     """
     A value of type Blocks[T] is a recipe for some number of blocks that will
     eventually produce a value of type T once the user submits the modal.
@@ -101,6 +78,20 @@ class Blocks(Eventual[T], DescriptorHack[T]):
         t = super().bind(bind)
         assert isinstance(t, self.__class__)
         return t
+
+    # Descriptor hack
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(self, obj: None, objtype: Any) -> Self:
+            ...
+
+        @overload
+        def __get__(self, obj: Any, objtype: Any) -> T:
+            ...
+
+        def __get__(self, obj: Any, objtype: Any) -> T | Self:
+            ...
 
 
 class Block(Blocks[T]):
