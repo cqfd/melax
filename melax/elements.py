@@ -348,7 +348,8 @@ class NumberInput(Element[T]):
             return None
         assert isinstance(payload, dict), f"Unexpected payload: {payload=}"
         v = payload.get("value")
-        assert isinstance(v, str)
+        if v is None:
+            return None
         return Ok(v)
 
     def map(self, f: Callable[[T], U]) -> "NumberInput[U]":

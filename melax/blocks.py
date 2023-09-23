@@ -1,3 +1,4 @@
+import json
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import (
@@ -37,15 +38,14 @@ class Blocks(Eventual[T]):
     eventually produce a value of type T once the user submits the modal.
     """
 
-    _name: list[str]
-
     def __init__(self) -> None:
         super().__init__()
-        self._name = []
         self._bind = None
 
     @abstractmethod
-    def _to_slack_blocks_json(self) -> Sequence[Mapping[str, JSON]]:
+    def _to_slack_blocks_json(
+        self, block_id_prefix: tuple[str, ...] = tuple()
+    ) -> Sequence[Mapping[str, JSON]]:
         ...
 
     @abstractmethod
@@ -59,9 +59,6 @@ class Blocks(Eventual[T]):
         self, block_id: list[str], action_id: str, query: str
     ) -> Sequence[Option]:
         ...
-
-    def __set_name__(self, owner: Any, name: str) -> None:
-        self._name.insert(0, name)
 
     @abstractmethod
     def is_interactive(self) -> bool:
@@ -99,11 +96,10 @@ class Block(Blocks[T]):
     https://api.slack.com/reference/block-kit/blocks?ref=bk
     """
 
-    def _to_slack_blocks_json(self) -> Sequence[Mapping[str, JSON]]:
-        if self._block_id is None:
-            return [self._to_slack_json()]
-        else:
-            return [{"block_id": self._block_id} | self._to_slack_json()]
+    def _to_slack_blocks_json(
+        self, block_id_prefix: tuple[str, ...] = tuple()
+    ) -> Sequence[Mapping[str, JSON]]:
+        return [self._to_slack_json() | {"block_id": json.dumps(block_id_prefix)}]
 
     @abstractmethod
     def _to_slack_json(self) -> Mapping[str, JSON]:
@@ -127,15 +123,16 @@ class Block(Blocks[T]):
     def _on_options(self, action_id: str, query: str) -> Sequence[Option]:
         ...
 
-    @property
-    def _block_id(self) -> str | None:
-        return "$".join(self._name) if self._name else None
-
     # Type-specific boilerplate
     def map(self, f: Callable[[T], U]) -> "Block[U]":
         u = super().map(f)
         assert isinstance(u, self.__class__)
         return u
+
+    def bind(self, bind: Bind[T]) -> "Block[T]":
+        t = super().bind(bind)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class Builder:
@@ -149,7 +146,7 @@ class Builder:
         blocks: Mapping[str, Blocks[Any]] = {
             k: v for k, v in cls.__dict__.items() if isinstance(v, Blocks)
         }
-        cls._dict = NestedBlocks(blocks, rename_children=False)
+        cls._dict = NestedBlocks(blocks)
 
     @classmethod
     def _parse(cls, payload: object) -> Parsed[Self]:
@@ -186,30 +183,25 @@ class NestedBlocks(Blocks[T]):
     def __init__(
         self: "NestedBlocks[dict[str, X]]",
         blocks: Mapping[str, "Blocks[X]"],
-        *,
-        rename_children: bool = True,
     ) -> None:
         super().__init__()
         self.blocks = blocks
-        if rename_children:
-            for block_id, block in blocks.items():
-                block.__set_name__(self, block_id)
 
     if TYPE_CHECKING:
 
         def __new__(
             cls,
             blocks: Mapping[str, "Blocks[X]"],
-            *,
-            rename_children: bool = True,
         ) -> "NestedBlocks[dict[str, X]]":
             ...
 
-    def _to_slack_blocks_json(self) -> Sequence[Mapping[str, JSON]]:
+    def _to_slack_blocks_json(
+        self, block_id_prefix: tuple[str, ...] = tuple()
+    ) -> Sequence[Mapping[str, JSON]]:
         return [
             block_json
-            for block in self.blocks.values()
-            for block_json in block._to_slack_blocks_json()
+            for k, block in self.blocks.items()
+            for block_json in block._to_slack_blocks_json(block_id_prefix + (k,))
         ]
 
     def _extract(self, payload: object) -> Parsed[object]:
@@ -219,7 +211,7 @@ class NestedBlocks(Blocks[T]):
         ), f"Unexpected keys: {payload.keys() - self.blocks.keys()}, {payload=}"
 
         result = {}
-        errors: dict[str, str] = {}
+        errors: dict[tuple[str, ...], str] = {}
         for name, block in self.blocks.items():
             v = payload.get(name)
             p = block.parse(payload.get(name))
@@ -228,7 +220,7 @@ class NestedBlocks(Blocks[T]):
                     print(f"Failed to parse: {name=} {block=} {v=}")
                     return None
                 case Errors(es):
-                    errors |= es
+                    errors |= {(name,) + k: v for k, v in es.items()}
                 case Ok(x):
                     result[name] = x
 
@@ -249,12 +241,6 @@ class NestedBlocks(Blocks[T]):
             block_id[1:], action_id, query
         )
 
-    def __set_name__(self, owner: Any, name: str) -> None:
-        super().__set_name__(owner, name)
-
-        for block in self.blocks.values():
-            block.__set_name__(owner, name)
-
     def is_interactive(self) -> bool:
         return any(block.is_interactive() for block in self.blocks.values())
 
@@ -271,6 +257,11 @@ class NestedBlocks(Blocks[T]):
         u = super().map(f)
         assert isinstance(u, self.__class__)
         return u
+
+    def bind(self, bind: Bind[T]) -> "NestedBlocks[T]":
+        t = super().bind(bind)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 # Combinators
@@ -329,6 +320,11 @@ class Actions(Block[T]):
         u = super().map(f)
         assert isinstance(u, self.__class__)
         return u
+
+    def bind(self, bind: Bind[T]) -> "Actions[T]":
+        t = super().bind(bind)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 @dataclass
@@ -398,6 +394,11 @@ class Divider(Block[T]):
         u = super().map(f)
         assert isinstance(u, self.__class__)
         return u
+
+    def bind(self, bind: Bind[T]) -> "Divider[T]":
+        t = super().bind(bind)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class Section(Block[T]):
@@ -504,6 +505,11 @@ class Section(Block[T]):
         u = super().map(f)
         assert isinstance(u, self.__class__)
         return u
+
+    def bind(self, bind: Bind[T]) -> "Section[T]":
+        t = super().bind(bind)
+        assert isinstance(t, self.__class__)
+        return t
 
 
 class Input(Block[T]):
@@ -617,8 +623,9 @@ class Input(Block[T]):
             return processed
         assert isinstance(processed, Ok)
         if isinstance(processed.value, str):
-            assert self._block_id is not None
-            return Errors({self._block_id: processed.value})
+            errors = Errors()
+            errors.add([], processed.value)
+            return errors
         return processed.value  # type: ignore
 
     def _extract(self, payload: object) -> Parsed[object]:
@@ -640,11 +647,3 @@ class Input(Block[T]):
 
     def is_interactive(self) -> bool:
         return self.element.is_interactive()
-
-    def error(self, msg: str) -> dict[str, str]:
-        """
-        Helper to tr to make it a little more ergonomic to construct block
-        error messages.
-        """
-        assert self._block_id is not None
-        return {self._block_id: msg}

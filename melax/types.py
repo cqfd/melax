@@ -1,4 +1,5 @@
 import copy
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Mapping, Sequence, TypeVar
@@ -19,25 +20,32 @@ class Ok(Generic[T]):
     value: T
 
 
+def to_block_id(block_id: Sequence[str]) -> str:
+    return json.dumps(block_id)
+
+
+def from_block_id(block_id: str) -> tuple[str, ...]:
+    return tuple(json.loads(block_id))
+
+
 @dataclass
 class Errors:
-    errors: dict[str, str]
+    errors: dict[tuple[str, ...], str]
 
     def __init__(
-        self, errors: Mapping[str, str] | Mapping[str | tuple[str], str] | None = None
+        self,
+        errors: dict[tuple[str, ...], str] | None = None,
     ) -> None:
-        self.errors = {}
-        if errors is not None:
-            for k, v in errors.items():
-                block_id = k if isinstance(k, str) else "$".join(k)
-                self.errors[block_id] = v
+        self.errors = {} if errors is None else errors
 
-    def add(self, block_id: str | Sequence[str], msg: str) -> None:
-        b = block_id if isinstance(block_id, str) else "$".join(block_id)
-        self.errors[b] = msg
+    def add(self, block_id: Sequence[str], msg: str) -> None:
+        self.errors[tuple(b for b in block_id)] = msg
 
     def __bool__(self) -> bool:
         return bool(self.errors)
+
+    def _to_slack_json(self) -> dict[str, Any]:
+        return {to_block_id(k): v for k, v in self.errors.items()}
 
 
 Parsed = Ok[T] | Errors | None

@@ -15,7 +15,6 @@ from melax.elements import (
     Select,
     UsersSelect,
 )
-from melax.modals import Errors as ModalErrors
 from melax.modals import Modal, OnSubmit, View
 from melax.types import Bind, Option
 
@@ -129,7 +128,7 @@ def test_error_helpers() -> None:
     p = Form._parse(
         {"i": {"NumberInput": {"value": "7"}}, "j": {"PlainTextInput": {"value": "0"}}}
     )
-    assert p == Errors({"i": "7 is unlucky", "j": "Must be positive"})
+    assert p == Errors({("i",): "7 is unlucky", ("j",): "Must be positive"})
 
     p2 = Form._parse(
         {
@@ -156,8 +155,8 @@ def test_errors_in_submit_handlers() -> None:
                     }
                 )
 
-            def on_submit(f: Form) -> ModalErrors | None:
-                errors = ModalErrors()
+            def on_submit(f: Form) -> Errors | None:
+                errors = Errors()
                 if f.i == 7:
                     errors.add("i", "wrong number")
                 if f.jk["k"] == 100:
@@ -180,8 +179,14 @@ def test_errors_in_submit_handlers() -> None:
         }
     )
     assert isinstance(p, Ok)
-    assert v.on_submit[1](p.value) == ModalErrors(
-        {"i": "wrong number", "jk$k": "too old"}
+    assert v.on_submit[1](p.value) == Errors(
+        {
+            ("i",): "wrong number",
+            (
+                "jk",
+                "k",
+            ): "too old",
+        }
     )
 
 

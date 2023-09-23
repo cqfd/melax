@@ -188,7 +188,9 @@ class NiceToMeetYouModal(Modal):
             print(f"{form.sound_good=} {form.dob=} {form.button=}")
 
         return View(
-            title="Nice to meet you!", builder=Form, on_submit=("Ok", on_submit)
+            title=f"Nice to meet you {self.name}!",
+            builder=Form,
+            on_submit=("Ok", on_submit),
         )
 
     def on_enter_pressed(self, msg_so_far: str) -> None:
@@ -353,7 +355,7 @@ def inflate_block_ids(values: dict[str, Any]) -> dict[str, Any]:
 
     result: dict[str, Any] = {}
     for k, v in values.items():
-        set(result, k.split("$"), v)
+        set(result, json.loads(k), v)
 
     return result
 
@@ -362,9 +364,15 @@ def inflate_block_ids(values: dict[str, Any]) -> dict[str, Any]:
 def handle_do(context: BoltContext, client: WebClient, body: dict[str, Any]) -> None:
     context.ack()
 
+    print(json.dumps(body, indent=2))
+
     # modal = NiceToMeetYouModal(name="Alan")
     # modal = TestModal(name="Alan", age=38)
-    modal = BindingCheck()
+    modal_type, *args = body["text"].split()
+    kwargs = dict(a.split("=", 1) for a in args)
+    modal = next(modal for name, modal in _modals.items() if modal_type in name)(
+        **kwargs
+    )
 
     print(json.dumps(modal._to_slack_view_json(), indent=2))
 
@@ -394,7 +402,7 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
     result = view.builder._parse(values)
     assert result is not None
     if isinstance(result, Errors):
-        context.ack(response_action="errors", errors=result.errors)
+        context.ack(response_action="errors", errors=result._to_slack_json())
         return
 
     # Run the modal's on_submit handler, which returns whatever
@@ -405,8 +413,8 @@ def handle_modal_submission(context: BoltContext, body: dict[str, Any]) -> None:
             context.ack(response_action="clear")
         case Modal.Push(next_modal):
             context.ack(response_action="push", view=next_modal._to_slack_view_json())
-        case Errors(errors):
-            context.ack(response_action="errors", errors=errors)
+        case Errors(_):
+            context.ack(response_action="errors", errors=next_step._to_slack_json())
         case next_modal:
             context.ack(response_action="update", view=next_modal._to_slack_view_json())
 
@@ -432,7 +440,7 @@ def handle_block_actions(
         message_type = _messages[private_metadata["type"]]
         message = message_type.model_validate(private_metadata["value"])
         message.render()._on_block_action(
-            action["block_id"].split("$"), action["action_id"], action
+            json.loads(action["block_id"]), action["action_id"], action
         )
 
         client.chat_update(
@@ -447,7 +455,6 @@ def handle_block_actions(
     private_metadata = json.loads(body["view"]["private_metadata"])
     modal_type = _modals[private_metadata["type"]]
     modal = modal_type.model_validate(private_metadata["value"])
-    modal._values = values
 
     # *re*-render the modal, which had better produce the same view as
     # whatever thing on the user's screen led to this callback
@@ -457,7 +464,7 @@ def handle_block_actions(
     view.builder._parse(values)
     # Run the action handler
     view.builder._on_block_action(
-        action["block_id"].split("$"), action["action_id"], action
+        json.loads(action["block_id"]), action["action_id"], action
     )
     # And then *re*-render the modal again, since its state may have changed
     client.views_update(
@@ -480,13 +487,12 @@ def handle_options(
     modal_type = _modals[private_metadata["type"]]
     original_state = private_metadata["value"]
     modal = modal_type.model_validate(private_metadata["value"])
-    modal._values = body["view"]["state"]["values"]
 
     view = modal.render()
     options = view.builder._on_block_options(
-        body["block_id"].split("$"), body["action_id"], query
+        json.loads(body["block_id"]), body["action_id"], query
     )
-    new_state = modal.model_dump_json()
+    new_state = modal.model_dump()
     assert (
         new_state == original_state
     ), f"Option callbacks can't modify the state of the modal! {new_state=} != {original_state=}"
